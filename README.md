@@ -2,7 +2,7 @@
 
 The official documentation site for [Codexa Core](https://github.com/Codexa-by-HQ/codexa-core), a modular, plugin-first toolkit for building Deno backends.
 
-Live at: [DOCS_URL_PLACEHOLDER](DOCS_URL_PLACEHOLDER)
+Live at: [https://codexa-docs.vercel.app](https://codexa-docs.vercel.app)
 
 Built with [Next.js](https://nextjs.org) and [Fumadocs](https://fumadocs.dev), content is written in MDX under `content/docs/`.
 
