@@ -1,0 +1,186 @@
+---
+title: "Dispatch & Lifecycle"
+description: "The exact path a request takes through dispatch, the five lifecycle phases an app moves through, and how to run async setup safely."
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+`dispatch` is the one function every runtime hands a request to. It is useful well beyond serving real traffic, tests, background jobs, and serverless adapters can all call it directly.
+
+```ts
+const app = createApp('api').install(healthPlugin);
+
+await app.boot();
+
+const response = await app.dispatch(
+  new Request('http://local.test/health'),
+);
+
+console.log(response.status);
+```
+
+## What happens on every call
+
+<Steps>
+
+<Step>
+
+### Boot, if needed
+
+If the app has not been committed yet, `dispatch` calls `boot()` for you. The first request to a never-booted app pays the boot cost, every request after that does not.
+
+</Step>
+
+<Step>
+
+### Shutdown check
+
+If the app is `shutting_down` or `stopped`, `dispatch` immediately returns `503 Service Unavailable` without attempting to match a route.
+
+</Step>
+
+<Step>
+
+### Method check
+
+The request method is checked against the methods Codexa Core understands, `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, and `HEAD`. Anything else returns `501 Not Implemented`.
+
+</Step>
+
+<Step>
+
+### Route matching
+
+The path is matched against the compiled route table. No match, or a match against a disabled route, calls your [`onNotFound`](#not-found-and-exceptions) handler.
+
+</Step>
+
+<Step>
+
+### Middleware, then the handler
+
+Matching [middleware](/docs/http/middleware) runs in priority order, followed by the route handler, unless a middleware already returned a response or threw.
+
+</Step>
+
+<Step>
+
+### Hooks fire
+
+[Hooks](/docs/http/hooks) fire based on the final response status, or on a thrown error.
+
+</Step>
+
+</Steps>
+
+## The five phases
+
+```ts
+type LifeCyclePhase = 'idle' | 'booting' | 'ready' | 'shutting_down' | 'stopped';
+```
+
+An app starts `idle`. `boot()` moves it through `booting` to `ready`. `shutdown()` moves it through `shutting_down` to `stopped`. `app.getPhase()` reads the current phase at any time, which is useful for a guard that must not act on an app that has already started shutting down.
+
+```ts
+if (app.getPhase() === 'shutting_down' || app.getPhase() === 'stopped') {
+  throw new Error('Cannot install a plugin after shutdown has started.');
+}
+```
+
+This exact check is what a plugin installer function should run before doing expensive setup work, such as opening a database connection, only to install into an app that is already on its way down.
+
+## Running async setup safely
+
+A plugin's own `setup(scope, config)` must be synchronous, covered in [Plugins](/docs/http/plugins). Two patterns handle the async work that a real plugin usually needs.
+
+**Pass `boot()` a setup function.** It runs once, awaited, before the route table compiles.
+
+```ts
+await app.boot(async () => {
+  await connectToDatabase();
+});
+```
+
+**Or initialize resources before installing, and install a function instead of a constant.** This is the shape a plugin with real external dependencies, such as a database or Redis connection, tends to grow into.
+
+```ts
+export async function installOrdersPlugin(
+  app: ICodexaHttp,
+  config: OrdersPluginConfig,
+) {
+  const database = await connectToDatabase(config.databaseUrl);
+
+  try {
+    const plugin = definePlugin({
+      name: 'orders',
+      setup(scope) {
+        scope.route({
+          method: 'GET',
+          path: '/orders/:id',
+          handler: async (ctx) => {
+            const order = await database.orders.findById(ctx.params.id);
+            return ctx.json(order);
+          },
+        });
+        scope.onShutdown(() => database.close());
+      },
+    });
+    return app.install(plugin, config);
+  } catch (error) {
+    await database.close();
+    throw error;
+  }
+}
+```
+
+`setup` itself stays synchronous, since everything async happened before `definePlugin` was even called, and the plugin closes only the resource it opened, in its own `onShutdown` hook. This pattern is covered in more depth in [Resource Composition](/docs/http/resource-composition).
+
+## Not found and exceptions
+
+Two handlers customize what a request that did not succeed looks like. Both must be registered before boot, and both have working defaults if you never set them.
+
+```ts
+app.onNotFound((request) => {
+  const url = new URL(request.url);
+  return Response.json({ error: 'Not Found', path: url.pathname }, { status: 404 });
+});
+
+app.onException((error, request) => {
+  if (error instanceof MyAppError) {
+    return Response.json({ error: error.message }, { status: error.status });
+  }
+  return Response.json({ error: 'Internal Server Error' }, { status: 500 });
+});
+```
+
+Without `onNotFound`, a plain `404 Not Found` text response is returned. Without `onException`, a plain `500 Internal Server Error` text response is returned, and the error is still logged.
+
+## Shutting down
+
+```ts
+Deno.addSignalListener('SIGINT', async () => {
+  await app.shutdown();
+  await app.whenStopped();
+  Deno.exit(0);
+});
+```
+
+`shutdown()` runs every registered `onShutdown` hook, app level and plugin level, and stops the app from accepting new work. It is safe to call more than once, later calls resolve to the same result. `whenStopped()` resolves once that process has fully finished, which matters when something other than your own code, such as a signal handler, initiated shutdown and your entry point needs to wait before the process exits.
+
+If your entry point opened a resource before `createApp` was even called, such as a database connection shared across several plugins, close it alongside `app.shutdown()` rather than after it. Running them together with `Promise.allSettled` means a slow plugin shutdown hook does not delay closing the connection, and a failure in one does not hide a failure in the other.
+
+```ts
+async function shutdown(): Promise<void> {
+  await Promise.allSettled([
+    app.shutdown(),
+    database.disconnect(),
+  ]);
+}
+```
+
+See [Resource Composition](/docs/http/resource-composition) for who should own closing a resource in the first place.
+
+<Cards>
+  <Card title="Hooks" href="/docs/http/hooks" description="Exactly when onSuccess and onError fire around a request." />
+  <Card title="Resource Composition" href="/docs/http/resource-composition" description="Passing shared resources into a plugin, and who is responsible for closing them." />
+</Cards>

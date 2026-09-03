@@ -1,0 +1,104 @@
+---
+title: "Overview"
+description: "One key value interface, three backends: in-memory, Redis, or Deno KV, with atomic operations built in."
+---
+
+import { TypeTable } from 'fumadocs-ui/components/type-table';
+
+`createStore(config)` returns a key value store. `mode` picks the backend, and every backend implements the exact same interface, so switching from memory to Redis later is a config change, not a rewrite.
+
+```ts
+import { createStore } from '@codexa/core/store';
+
+const sessions = await createStore({ mode: 'memory' });
+await sessions.set('session:u1', { userId: 'u1' }, { ttl: 900 });
+const session = await sessions.get<{ userId: string }>('session:u1');
+```
+
+## The three modes
+
+```ts
+await createStore({ mode: 'memory' });
+await createStore({ mode: 'redis', redisClient: redis.getClient() });
+await createStore({ mode: 'kv', kvPath: './data/store.db' });
+```
+
+<Callout type="warn">
+  `mode: 'redis'` and `mode: 'kv'` both fall back to an in-memory store if the backend fails to connect, memory being unreachable is impossible, so this fallback is silent by default. A Redis outage does not fail your store setup, it quietly starts handing out an ephemeral in-memory store instead, and only a warning is logged. Pass `fallbackToMemory: false` if a production store failing to reach its real backend should throw instead of degrading silently.
+</Callout>
+
+```ts
+await createStore({
+  mode: 'redis',
+  redisClient: redis.getClient(),
+  fallbackToMemory: false, // throw instead of silently degrading to memory
+});
+```
+
+Deno KV additionally requires the unstable flag at runtime.
+
+```bash
+deno run --unstable-kv --allow-read --allow-write main.ts
+```
+
+## The store interface
+
+Every mode implements the same core operations.
+
+<TypeTable
+  type={{
+    'set(key, value, options?)': { type: 'Promise<string>', description: 'Store a JSON-serializable value. options.ttl sets an expiry in seconds.' },
+    'get(key)': { type: 'Promise<T | null>', description: 'Read a value back, or null if missing or expired.' },
+    'del(...keys)': { type: 'Promise<number>', description: 'Delete one or more keys. Returns the count actually deleted.' },
+    'exists(...keys)': { type: 'Promise<number>', description: 'Count how many of the given keys are present.' },
+    'expire(key, seconds)': { type: 'Promise<number>', description: 'Set or replace a key\'s TTL without touching its value.' },
+    'ttl(key)': { type: 'Promise<number>', description: 'Seconds remaining, -1 if the key has no expiry, -2 if it does not exist.' },
+    'incr / decr': { type: '(key) => Promise<number>', description: 'Atomically increment or decrement a numeric value by 1.' },
+    'incrby / decrby': { type: '(key, amount) => Promise<number>', description: 'Atomically increment or decrement by a given amount.' },
+    'keys(pattern)': { type: 'Promise<string[]>', description: 'Glob-style key lookup, such as "session:*".' },
+    'flushdb()': { type: 'Promise<string>', description: 'Clear every key this store instance can see.' },
+    'quit()': { type: 'Promise<string>', description: 'Close the store. Safe to call more than once.' },
+  }}
+/>
+
+## Atomic helpers
+
+Two operations exist specifically for correctness under concurrency, reading a value and later acting on it is never safe to split into two separate calls if another request could run in between.
+
+```ts
+// Atomic read-and-delete, useful for a one-time token
+const transaction = await sessions.take<AuthTransaction>('txn:123');
+if (transaction === null) {
+  throw new Error('Transaction is missing, expired, or already consumed.');
+}
+```
+
+```ts
+// Atomic compare-and-set, retried until it succeeds
+while (true) {
+  const current = await sessions.get<AuthTransaction>('txn:123');
+  if (current === null) throw new Error('Transaction is missing.');
+
+  const next = { ...current, loginVerified: true };
+  const updated = await sessions.compareAndSet('txn:123', current, next);
+  if (updated) break; // someone else updated it first, retry
+}
+```
+
+## Convenience methods on top
+
+A few methods build on the core interface, available on the instance `createStore` returns.
+
+```ts
+await sessions.getOrSet('u1:profile', () => fetchProfile('u1'), { ttl: 300 });
+await sessions.delPattern('session:*');
+await sessions.mset({ 'a': 1, 'b': 2 }, { ttl: 60 });
+const values = await sessions.mget<number>(['a', 'b']); // Map<string, number | null>
+await sessions.stats(); // { type, keyCount, uptimeMs, backend }
+await sessions.close(); // alias for quit()
+```
+
+<Cards>
+  <Card title="Registry" href="/docs/store/registry" description="Named stores with centralized key-prefixing and cleanup." />
+  <Card title="Cache" href="/docs/cache/overview" description="A tagged, TTL-aware layer built on top of a store." />
+</Cards>

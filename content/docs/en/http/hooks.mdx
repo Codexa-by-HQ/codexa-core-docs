@@ -1,0 +1,92 @@
+---
+title: "Hooks"
+description: "Observe every request after it finishes, log shutdown, and understand exactly when a success hook runs instead of an error hook."
+---
+
+Hooks run after a request has already been handled. They cannot change the response, and they cannot stop a request from completing. Use them for logging, metrics, and auditing, not for authorization or validation, which belong in [middleware](/docs/http/middleware) instead.
+
+```ts
+const app = createApp('api')
+  .onSuccess((event) => {
+    console.log('request ok', { path: event.path, status: event.response.status });
+  })
+  .onError((event) => {
+    console.error('request failed', {
+      path: event.path,
+      status: event.response.status,
+      error: event.error?.message,
+    });
+  })
+  .onShutdown(() => {
+    console.log('closing database connections');
+  });
+```
+
+## Success or error, not both
+
+Exactly one of `onSuccess` or `onError` runs for a given request, decided by the final response, not by which hook you happened to register.
+
+- `onError` runs when the response status is `400` or higher, **or** when the request handler threw. Both cases produce an `onError` event, but `event.error` is only present when something actually threw. A route handler that deliberately returns `ctx.json({ error: 'Unauthorized' }, { status: 401 })` triggers `onError` with `event.error` left undefined, since nothing threw.
+- `onSuccess` runs for every response below `400`.
+
+```ts
+app.onError((event) => {
+  if (event.error) {
+    console.error('unhandled exception', event.error.message);
+  } else {
+    console.warn('request ended in a', event.response.status, 'response');
+  }
+});
+```
+
+## What a hook can see
+
+A hook receives a controlled snapshot, not the live request or response. The native `Response` body is never exposed to a hook, so a streamed response is never accidentally consumed by logging code.
+
+```ts
+interface RequestHookEvent {
+  params: Record<string, string>;
+  query: Record<string, string | readonly string[]>;
+  path: string;
+  method: string;
+  state: RequestState;
+  locals: Record<string, unknown>;
+  route?: { name: string; method: string; path: string; pluginName?: string };
+  response: {
+    status: number;
+    statusText: string;
+    headers: Record<string, string>;
+    hasBody: boolean;
+    bodyUsed: boolean;
+    // body is always null here
+  };
+}
+```
+
+`event.query` is a plain object here, unlike `ctx.query` inside a route handler, which is a `URLSearchParams`. A repeated query key, such as `?tag=a&tag=b`, becomes an array on `event.query.tag`.
+
+## App level versus plugin level
+
+`onSuccess`, `onError`, and `onShutdown` can be registered on the root app, or inside a plugin's `setup` on `scope`. A plugin's hooks only run for requests handled by routes that plugin registered. App level hooks run for every request, and run before any plugin level hook for the same event.
+
+```ts
+export const auditPlugin = definePlugin({
+  name: 'audit',
+  setup(scope) {
+    scope.onSuccess((event) => {
+      console.log('audit: route', event.route?.name, 'completed');
+    });
+  },
+});
+```
+
+Hooks must be registered before the app boots, the same rule that applies to routes and middleware. A hook cannot be added after `boot()` has run.
+
+## A failing hook does not fail the request
+
+If a hook throws, or returns a rejected Promise, the framework catches it, logs it, and still returns the response to the caller. One broken logging hook cannot take down a request.
+
+<Cards>
+  <Card title="Middleware" href="/docs/http/middleware" description="Intercept a request before it runs, instead of observing it after." />
+  <Card title="Dispatch & Lifecycle" href="/docs/http/dispatch-and-lifecycle" description="Where hooks fit into the full request handling path." />
+</Cards>

@@ -1,0 +1,117 @@
+---
+title: "Static Files"
+description: "Serve a built frontend, including a hashed-asset cache strategy and single-page app navigation fallback, from one route handler."
+---
+
+`serveStatic`, exported from `@codexa/core/http`, turns a directory of built frontend files into a route. It is built for serving a single-page app, a static site export, or any other pre-built bundle, alongside your API in the same application.
+
+```ts
+import { definePlugin, serveStatic } from '@codexa/core/http';
+
+export const webPlugin = definePlugin({
+  name: 'web',
+  setup(scope) {
+    scope.route({
+      method: ['GET', 'HEAD'],
+      path: '/:path*',
+      handler: (ctx) => serveStatic(ctx, {
+        root: new URL('../dist/', import.meta.url),
+        spaFallback: true,
+      }),
+      options: { name: 'web.static', tags: ['public:web'] },
+    });
+  },
+});
+```
+
+`root` points at the directory holding the built app, typically resolved relative to the current file with `import.meta.url`. `:path*` captures the requested path and hands it to `serveStatic` through `ctx.params.path`, the default parameter name it reads.
+
+## Single-page app fallback
+
+`spaFallback: true` makes client-side routing work correctly on a hard refresh or a direct link. If a request has no file extension and asks for `text/html`, and no matching file exists on disk, `serveStatic` returns the entry document, `index.html` by default, instead of a 404. A request for `/dashboard/settings` in a React or Vue router app resolves this way, even though no `dashboard/settings.html` file exists on disk.
+
+A request for a real missing file, such as `/logo.png` when that file was never built, still returns a 404. The fallback only applies to extension-less navigation requests, not to missing assets.
+
+### Tighter control over which paths are assets
+
+`spaFallback` decides between a real file and the entry document by checking the request's file extension and `Accept` header. When your build output has a predictable asset directory, such as Vite's `assets/`, checking that prefix directly gives you an explicit rule instead of relying on that heuristic.
+
+```ts
+handler: (ctx) => {
+  const isAsset = ctx.params.path?.startsWith('assets/');
+  if (isAsset) {
+    return serveStatic(ctx, { root: appDist, spaFallback: false });
+  }
+  // Every other path is a client-side route. Always serve the entry document.
+  return serveStatic(ctx, { root: appDist, spaFallback: true, index: 'index.html' });
+},
+```
+
+## Tags and route toggling
+
+A static route accepts the same `options.tags` as any API route, and the same two tag-driven systems elsewhere in the framework apply to it too.
+
+- [`appliedOn` patterns](/docs/http/middleware#tag-patterns) on plugin middleware match against these tags, so a static route tagged `public:web` stays out of a `guarded*` authentication guard automatically, without an explicit exclusion rule.
+- [`disableByTags`](/docs/http/inspection-and-tags) can take the whole frontend offline for maintenance, independently of the API.
+
+```ts
+scope.route({
+  method: ['GET', 'HEAD'],
+  path: '/:path*',
+  handler: (ctx) => serveStatic(ctx, { root: appDist, spaFallback: true }),
+  options: { name: 'web.static', tags: ['public:web'] },
+});
+
+// Later, from an admin route or a script:
+app.disableByTags('public:web'); // the frontend now 404s, the API keeps running
+```
+
+## What it sets automatically
+
+| Concern | Behavior |
+| --- | --- |
+| Content type | Resolved from the file extension, covering common frontend build outputs: HTML, CSS, JS, JSON, source maps, fonts, images, and more. |
+| Cache control | HTML documents default to `no-store`. Filenames that look content-hashed, such as `app.3f9a1c2b.js`, default to a one-year immutable cache. Everything else defaults to `public, max-age=0, must-revalidate`. All three are overridable through `cacheControl`. |
+| Conditional requests | A weak `ETag` is generated from file size and modification time. A matching `If-None-Match` header returns `304 Not Modified` with no body. |
+| `HEAD` requests | Return the same headers as `GET`, with no body. |
+| Method handling | Anything other than `GET` or `HEAD` returns `405 Method Not Allowed`. |
+| Path safety | Requests are resolved and re-checked against the configured root, so a path like `/../../etc/passwd` cannot escape it, including through a symlink. |
+
+The file itself is streamed from disk through `ctx.stream`, never loaded fully into memory first, so this scales to large assets without extra configuration.
+
+## Options reference
+
+```ts
+interface ServeStaticOptions {
+  root: string | URL;
+  path?: string;
+  pathParam?: string;
+  index?: string;
+  spaFallback?: boolean;
+  headers?: Readonly<Record<string, string>>;
+  cacheControl?: {
+    html?: string;
+    immutable?: string;
+    assets?: string;
+  };
+}
+```
+
+`headers` merges in anything you want present on every static response, such as a `Content-Security-Policy`.
+
+```ts
+handler: (ctx) => serveStatic(ctx, {
+  root: new URL('../dist/', import.meta.url),
+  spaFallback: true,
+  headers: { 'content-security-policy': "default-src 'self'" },
+}),
+```
+
+<Callout type="info">
+  `serveStatic` reads the filesystem through Deno's own APIs, so it only runs on Deno. It is well suited to serving your admin dashboard or marketing site from the same process as your API, not to replacing a CDN for a high-traffic public frontend.
+</Callout>
+
+<Cards>
+  <Card title="Response Helpers" href="/docs/http/response-helpers" description="The ctx.stream helper serveStatic is built on." />
+  <Card title="Routers" href="/docs/http/routers" description="Group a static route alongside your API routes in a plugin." />
+</Cards>

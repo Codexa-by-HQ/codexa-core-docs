@@ -1,0 +1,89 @@
+---
+title: "Response Helpers"
+description: "Every response-building method available on ctx, exactly what headers each one sets, and when to reach for the plain ones."
+---
+
+Every route handler's `ctx` carries a small set of methods for building a `Response`. They exist so common cases, JSON, plain text, HTML, a redirect, do not each require constructing headers by hand.
+
+```ts
+ctx.json({ ok: true });
+ctx.text('hello');
+ctx.html('<strong>hello</strong>');
+ctx.markdown('# hello');
+ctx.redirect('/login');
+ctx.stream(readableStream);
+ctx.send(formData);
+```
+
+The same helpers are also available directly on the root `app`, for the rare case where you need to build a `Response` outside of a request, such as inside `onNotFound`.
+
+## json
+
+```ts
+ctx.json({ id: '1', name: 'Ada' });
+ctx.json({ id: '1' }, { status: 201 });
+```
+
+Serializes the value with `JSON.stringify` and sets `content-type: application/json; charset=utf-8`, unless your `init.headers` already sets a `content-type`, in which case yours is kept.
+
+## text
+
+```ts
+ctx.text('pong');
+```
+
+Sets `content-type: text/plain; charset=utf-8`.
+
+## html
+
+```ts
+ctx.html('<h1>Hello</h1>');
+```
+
+Sets `content-type: text/html; charset=utf-8`. The string is sent as-is, with no escaping or templating, so build the markup safely before calling it.
+
+## markdown
+
+```ts
+ctx.markdown('# Release notes\n\n- Fixed a bug');
+```
+
+Sets `content-type: text/markdown; charset=utf-8`. Useful for an endpoint meant to be read as raw Markdown, such as the [`llms.txt`-style routes](/docs/openapi/serving-and-tooling) a documentation site might serve.
+
+## redirect
+
+```ts
+ctx.redirect('/login');           // 302 by default
+ctx.redirect('/login', 301);      // permanent redirect
+```
+
+Sets the `Location` header and returns an empty body. Only `301`, `302`, `307`, and `308` are accepted, any other status throws.
+
+## stream
+
+```ts
+const file = await Deno.open('./report.csv', { read: true });
+ctx.stream(file.readable, {
+  headers: { 'content-type': 'text/csv' },
+});
+```
+
+Passes the `ReadableStream` straight to `Response` with no transformation and no automatic `content-type`. Set your own `content-type` in `init.headers` when it matters.
+
+## send
+
+```ts
+ctx.send(formData);
+ctx.send(null, { status: 204 });
+```
+
+The most direct helper. It accepts anything a native `Response` body accepts, `BodyInit` or `null`, and applies no defaults at all. Reach for it when none of the other helpers fit, such as returning a `FormData` body or an empty `204 No Content`.
+
+<Callout type="info">
+  Every helper only sets a `content-type` if one is not already present in `init.headers`. Pass your own `content-type` to override any of them, including `json`, `text`, `html`, and `markdown`.
+</Callout>
+
+<Cards>
+  <Card title="Static Files" href="/docs/http/static-files" description="Serve a built frontend, including single-page app fallback, from a route handler." />
+  <Card title="WebSockets" href="/docs/http/websockets" description="Handle a WebSocket upgrade inside a normal route handler." />
+</Cards>

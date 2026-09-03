@@ -1,0 +1,19 @@
+{
+  "title": "HTTP",
+  "icon": "Server",
+  "pages": [
+    "overview",
+    "plugins",
+    "typed-config-and-services",
+    "middleware",
+    "routers",
+    "versioned-routes",
+    "hooks",
+    "response-helpers",
+    "static-files",
+    "websockets",
+    "dispatch-and-lifecycle",
+    "inspection-and-tags",
+    "resource-composition"
+  ]
+}

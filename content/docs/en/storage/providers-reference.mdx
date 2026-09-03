@@ -1,0 +1,83 @@
+---
+title: "Providers Reference"
+description: "What each storage provider actually supports, and what its storage key looks like, once you have gone past configuration."
+---
+
+import { TypeTable } from 'fumadocs-ui/components/type-table';
+
+[Storage Config](/docs/configuration/storage-config) covers the environment variables each provider needs to build a config. This page covers what you get once `createStorageManager` resolves that config into a working provider.
+
+## Capability matrix
+
+Not every provider supports every operation. `StorageManager` never throws for an unsupported one, it returns `undefined` instead, so check for that rather than wrapping calls in `try`/`catch`.
+
+| Capability | Local | S3 | Cloudinary | ImageKit |
+| --- | --- | --- | --- | --- |
+| `upload` | Yes | Yes | Yes | Yes |
+| `delete` | Yes | Yes | Yes | Yes |
+| `getSignedUrl` (time-limited delivery) | No | Yes | Yes | Yes |
+| `getTransformedUrl` (resize, crop, format) | No | CDN URL only, no real transforms | Yes | Yes |
+| `getSignedUploadUrl` (client-direct upload) | Throws | Yes, `PUT` | Yes, `POST` | Yes, `POST` |
+
+## What "key" means per provider
+
+`upload` always returns a `key`, but what it identifies is provider-specific, and `delete` and `exists` expect that exact same value back.
+
+| Provider | `result.key` is | Notes |
+| --- | --- | --- |
+| Local | The relative file path under `LOCAL_STORAGE_DIR` | |
+| S3 | The relative object path (the S3 key) | |
+| Cloudinary | The asset's `public_id` | |
+| ImageKit | The file's `fileId`, returned as `result.publicId` | Not `result.key`, the one exception |
+
+## Local
+
+Reads and writes under `LOCAL_STORAGE_DIR` (default `./uploads`) using Deno's filesystem APIs directly, so this provider only runs on Deno. Meant for local development and tests, not for a deployed app with more than one instance, since uploaded files live on that one instance's disk.
+
+## S3 and S3-compatible services
+
+Setting `S3_ENDPOINT` points the same provider at any S3-compatible service, MinIO or Cloudflare R2 included, instead of AWS.
+
+```ts
+buildStorageConfig({
+  STORAGE_PROVIDER: 's3',
+  S3_BUCKET: env.get('S3_BUCKET')!,
+  S3_REGION: env.get('S3_REGION')!,
+  S3_ACCESS_KEY: env.get('S3_ACCESS_KEY')!,
+  S3_SECRET_KEY: env.get('S3_SECRET_KEY')!,
+  S3_ENDPOINT: 'https://<account-id>.r2.cloudflarestorage.com', // Cloudflare R2
+});
+```
+
+`getTransformedUrl` on S3 only builds a CDN base URL, set via `S3_CDN_BASE_URL`, in front of the key. It does not perform real image transformations the way Cloudinary and ImageKit do.
+
+## Cloudinary and ImageKit
+
+Both are full image and video CDNs with real on-the-fly transformations, resize, crop, format conversion, applied through the URL itself.
+
+```ts
+storage.getTransformedUrl(result.key, {
+  width: 200,
+  height: 200,
+  crop: 'fill',
+  format: 'webp',
+});
+```
+
+### Transformation options
+
+The same shape `getTransformedUrl` and `upload`'s `eagerTransformations` both accept.
+
+<TypeTable
+  type={{
+    width: { type: "number | '<n>%'", description: 'Target width, in pixels or as a percentage.' },
+    height: { type: "number | '<n>%'", description: 'Target height, in pixels or as a percentage.' },
+    crop: { type: "'scale' | 'fill' | 'fit' | 'crop' | 'pad' | 'limit' | string", description: 'How width and height are applied when the source aspect ratio differs.' },
+    format: { type: "'webp' | 'avif' | 'jpeg' | 'png' | 'jpg' | 'gif' | 'svg' | 'mp4' | 'webm' | 'mov' | 'auto'", description: 'Convert to this format on delivery. Video formats apply to video assets.' },
+  }}
+/>
+
+<Cards>
+  <Card title="Overview" href="/docs/storage/overview" description="upload, delete, signed URLs, and client-direct uploads." />
+  <Card title="Storage Config" href="/docs/configuration/storage-config" description="Every environment variable each provider's config accepts." />
+</Cards>

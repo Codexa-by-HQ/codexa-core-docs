@@ -1,0 +1,86 @@
+---
+title: "Response Builders"
+description: "A consistent success, error, and pagination payload shape, separate from the framework's own ctx.json."
+---
+
+`@codexa/core/response` builds the JSON *payload* your API returns in a consistent shape, `{ success, data, meta }` or `{ success, error, meta }`, distinct from [`ctx.json`](/docs/http/response-helpers), which sends the native HTTP `Response`. Most of the time you will not call these directly, `send*` combines both steps.
+
+```ts
+import { sendOk, sendNotFound } from '@codexa/core/response';
+
+scope.route({
+  method: 'GET',
+  path: '/users/:id',
+  handler: async (ctx) => {
+    const user = await findUser(ctx.params.id);
+    if (!user) return sendNotFound(ctx, 'User not found');
+    return sendOk(ctx, user);
+  },
+});
+```
+
+```json
+{ "success": true, "data": { "id": "u1" }, "meta": { "timestamp": "2026-03-05T10:00:00.000Z" } }
+```
+
+## The send* helpers
+
+Each wraps a status code and the matching payload shape into one call, taking any object with a `json` method, which `ctx` already satisfies.
+
+```ts
+sendOk(ctx, data);                          // 200
+sendCreated(ctx, data);                     // 201, message defaults to "Created"
+sendNoContent();                            // 204, no ctx needed, no body
+sendBadRequest(ctx, 'Invalid input');       // 400
+sendUnauthorized(ctx);                      // 401
+sendForbidden(ctx);                         // 403
+sendNotFound(ctx, 'User not found');        // 404
+sendConflict(ctx, 'Email already in use');  // 409
+sendValidationError(ctx, zodError.issues);  // 422
+sendInternalError(ctx);                     // 500
+```
+
+## Pagination
+
+```ts
+import { sendPaginated, buildPaginationMeta } from '@codexa/core/response';
+
+scope.route({
+  method: 'GET',
+  path: '/orders',
+  handler: async (ctx) => {
+    const page = Number(ctx.query.get('page') ?? 1);
+    const limit = 20;
+    const { rows, total } = await listOrders({ page, limit });
+
+    return sendPaginated(ctx, rows, buildPaginationMeta(page, limit, total));
+  },
+});
+```
+
+```json
+{
+  "success": true,
+  "data": [/* ... */],
+  "pagination": { "page": 1, "limit": 20, "total": 143, "totalPages": 8, "hasNext": true, "hasPrev": false },
+  "meta": { "timestamp": "2026-03-05T10:00:00.000Z" }
+}
+```
+
+`buildPaginationMeta` clamps `page` and `limit` to at least `1`, so an out-of-range query parameter cannot produce a division-by-zero or a negative page count.
+
+## Building a payload without sending it
+
+`createSuccessResponse`, `createErrorResponse`, and `createPaginatedResponse` build the same payload shapes as plain objects, no `Response` involved, useful when a payload needs to be logged, tested, or nested inside something else before it is ever sent.
+
+```ts
+import { createSuccessResponse } from '@codexa/core/response';
+
+const payload = createSuccessResponse(user, 'Profile loaded');
+// { success: true, data: user, message: 'Profile loaded', meta: { timestamp: '...' } }
+```
+
+<Cards>
+  <Card title="Response Helpers" href="/docs/http/response-helpers" description="ctx.json and the rest of the native Response builders these wrap." />
+  <Card title="Query Parser" href="/docs/utilities/query-parser" description="Parsing the page and limit query parameters used above." />
+</Cards>

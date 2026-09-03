@@ -1,0 +1,130 @@
+---
+title: "Quick Start"
+description: "A working Codexa Core application in three steps: define a plugin, install it, and start the server."
+icon: "Zap"
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+The example below is a complete application. It answers `GET /health` with `{ ok: true }`, using nothing beyond what ships in `@codexa/core/http`.
+
+<Steps>
+
+<Step>
+
+### Define a plugin
+
+A plugin is the unit every Codexa Core application is built from. Create `main.ts` and start with a plugin that answers a health check.
+
+```ts title="main.ts"
+import { createApp, definePlugin } from '@codexa/core/http';
+
+const healthPlugin = definePlugin({
+  name: 'health',
+  metadata: {
+    description: 'Health and readiness endpoints',
+    tags: ['system'],
+  },
+  setup(scope) {
+    scope.route({
+      method: 'GET',
+      path: '/health',
+      handler: (ctx) => ctx.json({ ok: true }),
+      options: {
+        name: 'health.check',
+        tags: ['public', 'health'],
+      },
+    });
+  },
+});
+```
+
+`setup(scope)` is where a plugin registers everything it owns. Here it registers one route, a `GET /health` handler that returns `{ ok: true }` as JSON.
+
+</Step>
+
+<Step>
+
+### Create the app and install the plugin
+
+```ts title="main.ts"
+const app = createApp('codexa-api')
+  .install(healthPlugin)
+  .onNotFound((request) => {
+    const url = new URL(request.url);
+    return Response.json({ error: 'Not Found', path: url.pathname }, { status: 404 });
+  });
+```
+
+- `createApp` takes an optional name for the application.
+- `install` accepts as many plugins as your app needs.
+- `onNotFound` gives you control over the response for routes that do not exist.
+
+</Step>
+
+<Step>
+
+### Start the server
+
+Hand `app.dispatch` to `Deno.serve`. `dispatch` is a plain `(request: Request) => Promise<Response>` function, so this is the only line that starts a real server.
+
+```ts title="main.ts"
+Deno.serve(app.dispatch);
+```
+
+Run the file with network access.
+
+```bash
+deno run --allow-net main.ts
+```
+
+In a second terminal, call the endpoint.
+
+```bash
+curl http://localhost:8000/health
+```
+
+```json
+{ "ok": true }
+```
+
+</Step>
+
+</Steps>
+
+## Booting explicitly
+
+`dispatch` boots the app automatically on its first request, so the three steps above are already a complete, working server. Call `app.boot()` yourself when you want plugin setup errors to surface before the server starts accepting traffic, rather than on the first request that hits a broken plugin.
+
+```ts
+const app = createApp('codexa-api').install(healthPlugin);
+
+await app.boot();
+
+Deno.serve(app.dispatch);
+```
+
+## Testing without a server
+
+Call `dispatch` directly in a test or a script, with no port and no running server.
+
+```ts
+const response = await app.dispatch(
+  new Request('http://localhost/health'),
+);
+
+console.log(response.status);
+console.log(await response.json());
+```
+
+## What you built
+
+- A working application with one plugin, one route, and a not found handler.
+- Running on a Fetch API compatible server.
+- The same `app.dispatch` handler would run unchanged on Bun or Cloudflare Workers, as covered in the [introduction](/docs).
+
+<Cards>
+  <Card title="Plugins" href="/docs/http/plugins" description="Plugin shape, metadata, and dependsOn." />
+  <Card title="Typed Config & Services" href="/docs/http/typed-config-and-services" description="How one plugin exposes a typed service to another." />
+  <Card title="Routers" href="/docs/http/routers" description="Group related routes and mount them into a plugin." />
+</Cards>

@@ -1,0 +1,116 @@
+---
+title: "Overview"
+description: "A type-safe event bus with local in-process delivery, and optional Redis pub/sub for cross-process events."
+---
+
+`createEventBus()` returns an independent bus. Call `initialize()` once before using it. With no Redis client, the bus stays local to this process. Pass one, and events can travel across processes too.
+
+```ts
+import { createEventBus } from '@codexa/core/bus';
+
+const ordersBus = createEventBus();
+await ordersBus.initialize();
+
+ordersBus.on<{ id: string }>('orders', 'created', (order) => {
+  console.log('order created', order.id);
+});
+
+ordersBus.emit('orders', 'created', { id: 'o_1' });
+```
+
+An event is addressed by two parts together, a `channel` and an `event` name, `'orders'` and `'created'` in the example above, not by one combined string.
+
+## Subscribing
+
+```ts
+ordersBus.on<{ id: string }>('orders', 'created', (order) => { /* ... */ });
+ordersBus.once('orders', 'created', (order) => { /* runs once, then removes itself */ });
+
+const controller = new AbortController();
+ordersBus.on('orders', 'created', handler, { signal: controller.signal });
+controller.abort(); // unsubscribes this handler
+```
+
+`off` removes handlers at four levels of specificity, from one exact handler down to everything on the bus.
+
+```ts
+ordersBus.off('orders', 'created', handler); // this one handler
+ordersBus.off('orders', 'created');          // every handler for this event
+ordersBus.off('orders');                     // every handler for this channel
+ordersBus.off();                             // every handler on the bus
+```
+
+A handler that throws, or whose returned Promise rejects, is caught and logged. It never crashes `emit` or takes down other handlers for the same event.
+
+## Emitting
+
+```ts
+ordersBus.emit('orders', 'created', { id: 'o_1' });               // local only
+await ordersBus.emitAsync('orders', 'created', { id: 'o_1' });    // local, awaits every handler
+```
+
+`emit` does not wait for handlers, including async ones, it fires and returns immediately. Use `emitAsync` when the caller needs to know every handler has actually finished, for example before responding to an HTTP request that triggered the event.
+
+## Distributed mode
+
+Pass a connected Redis client to `initialize()` to make `emit` cross-process.
+
+```ts
+import { createRedisConnection } from '@codexa/core/config';
+import { createEventBus } from '@codexa/core/bus';
+
+const redis = createRedisConnection({ url: env.get('REDIS_URL')! });
+await redis.connect();
+
+const ordersBus = createEventBus();
+await ordersBus.initialize({
+  redisClient: redis.getClient(),
+  subscribeChannels: ['orders'],
+});
+
+ordersBus.emit('orders', 'created', { id: 'o_1' }, { distributed: true });
+```
+
+<Callout type="info">
+  `distributed: true` is opt-in per call, even once the bus is in distributed mode. A plain `emit(...)` without it stays local, which is useful for events that only ever matter within the current process. Round-trip delivery across processes needs both sides: `subscribeChannels` to receive, and `distributed: true` to publish.
+</Callout>
+
+Each bus instance tags its own published events with an internal instance id, and ignores messages carrying its own id when they come back over Redis, so a process that both publishes and subscribes to the same channel does not receive its own events twice.
+
+## A registry for multiple buses
+
+```ts
+import { createEventBusRegistry } from '@codexa/core/bus';
+
+const buses = createEventBusRegistry();
+const orders = await buses.register('orders');
+const billing = await buses.register('billing', {
+  redisClient: redis.getClient(),
+  subscribeChannels: ['billing'],
+});
+
+await buses.destroyAll();
+```
+
+`register` initializes the bus for you and throws if a bus with that name is already registered. `destroyAll` tears every registered bus down together, useful in a single `app.onShutdown` hook instead of tracking each bus individually.
+
+## Cleaning up
+
+```ts
+await ordersBus.destroy();
+```
+
+Removes every handler, closes the Redis subscriber connection if one was opened, and resets the bus so it could theoretically be re-initialized. A plugin that creates its own bus should destroy it in its own `onShutdown` hook, the same ownership rule covered in [Resource Composition](/docs/http/resource-composition).
+
+## The default bus
+
+```ts
+import { eventBus } from '@codexa/core/bus';
+```
+
+A ready-made bus exported for backward compatibility and quick scripts. Prefer `createEventBus()` for anything owned by a specific plugin, so its lifecycle is explicit rather than shared with everything else importing the default.
+
+<Cards>
+  <Card title="Redis" href="/docs/configuration/redis" description="Creating the Redis client this page's distributed examples pass in." />
+  <Card title="Resource Composition" href="/docs/http/resource-composition" description="Passing a bus into a plugin through its install config." />
+</Cards>

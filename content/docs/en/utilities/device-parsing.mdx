@@ -1,0 +1,60 @@
+---
+title: "Device Parsing"
+description: "Turn a User-Agent header into structured browser, OS, and device information."
+---
+
+`parseDevice` reads a `User-Agent` string and returns structured fields instead of leaving you to regex it yourself, useful for session metadata, device management screens, and request logging.
+
+```ts
+import { parseDevice } from '@codexa/core/device';
+
+const info = parseDevice(ctx.headers.get('user-agent'));
+// {
+//   browser: 'Chrome 122.0.0',
+//   os: 'Windows 11',
+//   device: 'desktop',
+//   deviceVendor: 'unknown',
+//   deviceModel: 'unknown',
+//   engine: 'Blink 122.0.0',
+//   raw: 'Mozilla/5.0 ...',
+// }
+```
+
+`parseDevice` accepts `null` safely, a missing header parses to `'unknown'` fields rather than throwing, so it is safe to call directly on `ctx.headers.get('user-agent')` without a guard first.
+
+## A compact log line
+
+```ts
+import { parseDevice, formatDeviceShort } from '@codexa/core/device';
+
+const info = parseDevice(ctx.headers.get('user-agent'));
+formatDeviceShort(info); // "Chrome 122.0.0/Windows 11/desktop"
+```
+
+## A worked example: recording a login's device
+
+```ts
+scope.route({
+  method: 'POST',
+  path: '/auth/login',
+  handler: async (ctx) => {
+    const session = await authenticate(ctx);
+    const device = parseDevice(ctx.headers.get('user-agent'));
+
+    await sessions.set(session.id, {
+      userId: session.userId,
+      device: formatDeviceShort(device),
+      createdAt: new Date().toISOString(),
+    });
+
+    return ctx.json({ sessionId: session.id });
+  },
+});
+```
+
+`device` in the result is ua-parser-js's own category, typically `'mobile'`, `'tablet'`, or `'desktop'` when nothing more specific is detected, not a Codexa-specific enum.
+
+<Cards>
+  <Card title="Providers" href="/docs/providers" description="The ua-parser-js package this module is built on." />
+  <Card title="Store" href="/docs/store/overview" description="Where a parsed device record like the one above typically gets stored." />
+</Cards>

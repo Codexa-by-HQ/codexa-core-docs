@@ -1,0 +1,170 @@
+---
+title: "Inspection & Tags"
+description: "Query the routes, plugins, and services an app actually has installed, and toggle groups of routes on or off by tag, even after boot."
+---
+
+`app.inspect()` reads back everything installed in the app: routes, middleware, plugins, and exposed services. Reach for it to build an internal `/admin/routes` page, print a route map on startup for a sanity check, or assert in a test that a plugin exposed the service another plugin expects. It is not meant for anything a request handler needs on the hot path, since it walks the whole route table on every call.
+
+```ts
+const result = app.inspect();
+
+console.log(result.summary);
+// { routeCount: 12, enabledRouteCount: 11, disabledRouteCount: 1, pluginCount: 3, ... }
+
+console.table(result.routes);
+```
+
+## A worked example: an admin routes endpoint
+
+A common use of `inspect()` is exposing a small internal endpoint that lists every route the app actually has, useful for a status page or for verifying a deploy registered what you expected.
+
+A plugin's `setup` does not receive the app instance on its own, only `scope`. Pass `app` in through the plugin's config instead, the same way [Resource Composition](/docs/http/resource-composition) covers for any other shared value.
+
+```ts
+import { definePlugin, type ICodexaHttp } from '@codexa/core/http';
+
+interface AdminConfig {
+  readonly app: ICodexaHttp;
+}
+
+export const adminPlugin = definePlugin<'admin', AdminConfig>({
+  name: 'admin',
+  setup(scope, config) {
+    scope.route({
+      method: 'GET',
+      path: '/admin/routes',
+      handler: (ctx) => {
+        const { routes } = config.app.inspect({ includeDisabled: false });
+        return ctx.json(
+          routes.map((route) => ({
+            method: route.method,
+            path: route.path,
+            plugin: route.pluginName,
+          })),
+        );
+      },
+      options: { name: 'admin.routes', tags: ['admin'] },
+    });
+  },
+});
+
+const app = createApp();
+app.install(adminPlugin, { app });
+```
+
+## Filtering a query
+
+Every field on `InspectQuery` is optional, and combining them narrows the result to routes, middleware, and plugins matching all of the fields you set.
+
+```ts
+app.inspect({
+  plugins: ['orders'],
+  tags: ['orders:create'],
+  methods: ['POST'],
+  includeDisabled: true,
+});
+```
+
+```ts
+interface InspectQuery {
+  tags?: readonly string[];
+  plugins?: readonly string[];
+  routes?: readonly string[];
+  services?: readonly string[];
+  methods?: readonly HttpMethod[];
+  versions?: readonly string[];
+  includeDisabled?: boolean;
+}
+```
+
+- `tags`, `plugins`, `routes`, and `methods` narrow which routes come back, and `services` narrows which exposed services come back, matched against the service name a plugin passed to `exposeService`.
+- `versions` filters to routes registered under a specific [version](/docs/http/versioned-routes), leaving unversioned routes out unless you also ask for them by other fields.
+- `includeDisabled` defaults to **true**. A query with no `includeDisabled` set returns disabled routes right alongside enabled ones, each with its own `enabled: false`. Pass `includeDisabled: false` explicitly to see only what a live request could actually reach.
+
+<Callout type="warn">
+  `tags` here is an exact match against each route's `options.tags`, not the `*prefix*` pattern language [`appliedOn` uses for middleware](/docs/http/middleware#tag-patterns). Querying `tags: ['orders']` only matches routes tagged exactly `orders`, not `orders:create`.
+</Callout>
+
+## Reading the result
+
+```ts
+interface InspectResult {
+  query?: InspectQuery;
+  summary: {
+    routeCount: number;
+    enabledRouteCount: number;
+    disabledRouteCount: number;
+    pluginCount: number;
+    serviceCount: number;
+    middlewareCount: number;
+  };
+  routes: readonly InspectRoute[];
+  middlewares: readonly InspectMiddleware[];
+  plugins: readonly InspectPlugin[];
+  services: readonly InspectService[];
+}
+```
+
+Four kinds of records make up a result, and each answers a different question.
+
+| Record | Answers | Key fields |
+| --- | --- | --- |
+| `InspectRoute` | What can a request reach, and through what? | `name`, `method`, `path`, `enabled`, `tags`, `pluginName`, `version`, `versionHeader`, `openapi`, and the list of middleware that applies to it |
+| `InspectMiddleware` | What runs before a route's handler? | `name`, `kind` (`'plugin'` or `'inline'`), `enabled`, `tags`, `appliedOn`, `priority`, `pluginName` |
+| `InspectPlugin` | What did a plugin register, and what does it depend on? | `name`, `metadata`, `dependsOn`, `services`, `routeCount`, `middlewareCount` |
+| `InspectService` | Does a service actually exist? | `name`, `pluginName`, `exists` |
+
+<Callout type="warn">
+  `middlewares`, `plugins`, and `services` only come back populated when the query asks for them. Calling `app.inspect()` with no arguments returns `routes` filled in and the other three empty. `plugins` and `middlewares` need `tags` or `plugins` set in the query, `services` needs `services` set. For the full list of installed plugin names with no filtering at all, use [`app.installedPlugins()`](/docs/http/overview#reading-the-app-back) instead.
+</Callout>
+
+`InspectPlugin`'s `dependsOn` and `services` together are enough to draw a dependency graph for the plugins you ask about.
+
+```ts
+const { plugins } = app.inspect({ plugins: ['orders', 'payments', 'notifications'] });
+for (const plugin of plugins) {
+  console.log(plugin.name, '->', plugin.dependsOn.join(', ') || '(no dependencies)');
+}
+```
+
+## Toggling routes by tag
+
+`enableByTags` and `disableByTags` turn groups of routes and plugin middleware on or off at once, matched the same exact way `inspect()`'s `tags` filter is, not through the `appliedOn` pattern language.
+
+```ts
+app.disableByTags('beta');
+// every route or middleware tagged exactly "beta" stops matching requests
+
+app.enableByTags('beta');
+// and matches again
+```
+
+Unlike most registration methods, these can be called after `boot()`, which makes them suitable for a feature flag toggled from a running admin route rather than only from startup configuration. Extending the `adminPlugin` above with the same `app` passed through its config:
+
+```ts
+scope.route({
+  method: 'POST',
+  path: '/admin/features/:tag/disable',
+  handler: (ctx) => {
+    config.app.disableByTags(ctx.params.tag);
+    return ctx.json({ disabled: ctx.params.tag });
+  },
+  options: { name: 'admin.features.disable', tags: ['admin'] },
+});
+```
+
+A disabled route behaves exactly like one that does not exist. `dispatch` calls your [`onNotFound`](/docs/http/dispatch-and-lifecycle#not-found-and-exceptions) handler for it, the same as an unmatched path.
+
+## Checking one route directly
+
+```ts
+app.hasRoute('GET', '/orders/:id');       // true or false
+app.toRegExp('GET', '/orders/:id');       // the compiled matching RegExp, or null
+```
+
+`toRegExp` is useful when something outside the app, a reverse proxy or a custom static file rule, needs to know whether a path would be claimed by a registered route.
+
+<Cards>
+  <Card title="Middleware" href="/docs/http/middleware" description="The appliedOn pattern language tags also power." />
+  <Card title="Plugins" href="/docs/http/plugins" description="Where route and plugin metadata comes from." />
+</Cards>

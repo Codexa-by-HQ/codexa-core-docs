@@ -1,0 +1,101 @@
+---
+title: "Versioned Routes"
+description: "Register more than one implementation of the same route, selected by a header, without breaking the unversioned one."
+---
+
+Versioning in Codexa Core is a header, not a URL prefix. A plugin declares which header it reads with `versionHeader`, and registers a versioned route with `scope.version(v).route(...)`.
+
+```ts
+import { definePlugin } from '@codexa/core/http';
+
+export const catalogPlugin = definePlugin({
+  name: 'catalog',
+  versionHeader: 'X-Catalog-Version',
+  setup(scope) {
+    scope.route({
+      method: 'GET',
+      path: '/catalog/items',
+      handler: (ctx) => ctx.json({ version: '1.0.0', items: [] }),
+      options: { name: 'catalog.items.v1', tags: ['catalog'] },
+    });
+
+    scope.version('2.0.0').route({
+      method: 'GET',
+      path: '/catalog/items',
+      handler: (ctx) => ctx.json({ version: '2.0.0', items: [], total: 0 }),
+      options: { name: 'catalog.items.v2', tags: ['catalog'] },
+    });
+  },
+});
+```
+
+`GET /catalog/items` now has two implementations at the same path. Which one runs depends on the `X-Catalog-Version` header the caller sends.
+
+```bash
+curl http://localhost:8000/catalog/items
+# no header, serves the unversioned route
+
+curl -H "X-Catalog-Version: 2.0.0" http://localhost:8000/catalog/items
+# serves the v2 route
+```
+
+`versionHeader` defaults to `X-Version` if a plugin does not set its own. Each plugin owns its version header independently, so two plugins can use different header names without conflict.
+
+## How a request picks a version
+
+For a given method and path, Codexa Core groups every registered route, versioned and unversioned, into one bucket. A request is resolved against that bucket in order.
+
+1. If the plugin's version header is present on the request, and its value matches a registered version, that versioned route runs.
+2. If the header is present but its value does not match any registered version, the request is treated as not found, even if an unversioned route exists at the same path. A caller asking for a version that does not exist does not silently fall back.
+3. If the header is absent entirely, the unversioned route runs, if one was registered.
+
+<Callout type="warn">
+  A version that does not exist results in a 404, not a fallback to the unversioned route. Only a completely missing header falls back.
+</Callout>
+
+## Duplicate routes
+
+A route is uniquely identified by its method, path, and version together, so the same method and path can be registered once unversioned and once per version, but never registered twice for the same version.
+
+```ts
+scope.version('2.0.0').route({ method: 'GET', path: '/catalog/items', /* ... */ });
+scope.version('2.0.0').route({ method: 'GET', path: '/catalog/items', /* ... */ }); // throws: Duplicate route
+```
+
+## Versioned parameters and metadata
+
+A versioned route accepts the same `options` as any other route, including `openapi` metadata for documenting the version explicitly.
+
+```ts
+import { zod } from '@codexa/core/providers/zod';
+
+scope.version('2.0.0').route({
+  method: 'GET',
+  path: '/catalog/items/:id',
+  handler: (ctx) => ctx.json({ id: ctx.params.id }),
+  options: {
+    name: 'catalog.items.show.v2',
+    tags: ['catalog:item'],
+    openapi: {
+      summary: 'Get catalog item',
+      params: zod.object({ id: zod.string() }),
+      responses: { 200: { description: 'Catalog item returned' } },
+    },
+  },
+});
+```
+
+See [Generating Documents](/docs/openapi/generating-documents) for how `versionedPathStrategy` turns this into a distinct path in the generated OpenAPI document.
+
+## Mounting a versioned router
+
+`version(v).mount(router)` mounts every route in a router under that version, the same way [Routers](/docs/http/routers) covers for unversioned mounting.
+
+```ts
+scope.version('2.0.0').mount('/api', catalogRouterV2);
+```
+
+<Cards>
+  <Card title="Routers" href="/docs/http/routers" description="Reusable route collections, mounted with or without a version." />
+  <Card title="Generating Documents" href="/docs/openapi/generating-documents" description="How versioned routes appear in a generated OpenAPI document." />
+</Cards>

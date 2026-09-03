@@ -1,0 +1,120 @@
+---
+title: "Plugins"
+description: "The shape of a plugin, what setup(scope, config) can do, and the rules around naming and dependencies."
+---
+
+A plugin is a plain object with a name and a `setup` function. `definePlugin` does not transform the object you pass it. Its only job is to help TypeScript infer the plugin's name, config type, and dependencies correctly.
+
+```ts
+import { createApp, definePlugin } from '@codexa/core/http';
+
+export const notesPlugin = definePlugin({
+  name: 'notes',
+  metadata: {
+    description: 'Create and list short text notes',
+    tags: ['notes'],
+  },
+  setup(scope) {
+    const notes: { id: string; text: string }[] = [];
+
+    scope.route({
+      method: 'POST',
+      path: '/notes',
+      handler: async (ctx) => {
+        const body = await ctx.request.json();
+        const note = { id: crypto.randomUUID(), text: body.text };
+        notes.push(note);
+        return ctx.json(note, { status: 201 });
+      },
+      options: { name: 'notes.create', tags: ['notes:create'] },
+    });
+
+    scope.route({
+      method: 'GET',
+      path: '/notes',
+      handler: (ctx) => ctx.json(notes),
+      options: { name: 'notes.list', tags: ['notes:list'] },
+    });
+  },
+});
+
+const app = createApp().install(notesPlugin);
+```
+
+## What a plugin owns
+
+| Field | Purpose |
+| --- | --- |
+| `name` | A unique identifier. Other plugins reference it in `dependsOn` to depend on it. |
+| `metadata` | Optional `description`, `author`, `license`, `repository`, and `tags`, useful for your own tooling and for [`inspect()`](/docs/http/inspection-and-tags). |
+| `versionHeader` | The request header used to select between [versioned routes](/docs/http/versioned-routes) this plugin registers. Defaults to `X-Version`. |
+| `dependsOn` | Plugin names this plugin is allowed to read services from. See [Typed Config & Services](/docs/http/typed-config-and-services). |
+| `setup(scope, config)` | Where routes, middleware, hooks, and exposed services are registered. |
+
+`setup` receives a `scope`, which is how the plugin registers everything it owns, and `config`, the second argument passed to `install(plugin, config)`. The `options.middleware` array on a route is covered in [Middleware](/docs/http/middleware), and the full set of response helpers available on `ctx` is covered in [Response Helpers](/docs/http/response-helpers).
+
+## Naming rules
+
+A plugin name cannot be empty and cannot contain whitespace. This is enforced at install time, not just a style suggestion, and installing a plugin with a space in its name throws immediately. Use hyphens for multi word names, such as `billing-core` or `media-service`.
+
+## Setup must be synchronous
+
+`setup(scope, config)` cannot be declared `async`, and cannot return a Promise.
+
+```ts
+// Throws immediately: "Plugin setup returned a Promise."
+definePlugin({
+  name: 'broken',
+  async setup(scope) {
+    await connectToDatabase();
+  },
+});
+```
+
+Codexa Core calls every plugin's `setup` while the app is being assembled, before anything is served, and needs that step to stay synchronous and predictable. For work that has to run before the app accepts traffic, such as opening a database connection, two patterns handle it:
+
+- Create the connection outside `setup`, and hand the plugin an already connected client through its install config. Covered in [Resource Composition](/docs/http/resource-composition).
+- Run the work inside `app.boot(async () => { ... })`. Covered in [Dispatch & Lifecycle](/docs/http/dispatch-and-lifecycle).
+
+## Installing more than one plugin
+
+Plugins install in the order you call `install`. If one plugin depends on another through `dependsOn`, the dependency must already be installed.
+
+```ts
+export const authPlugin = definePlugin({
+  name: 'auth',
+  setup(scope) { /* exposes a verifyToken service */ },
+});
+
+export const notesPlugin = definePlugin({
+  name: 'notes',
+  dependsOn: ['auth'] as const,
+  setup(scope) { /* can call scope.getService('auth', 'verifyToken') */ },
+});
+
+const app = createApp()
+  .install(authPlugin)   // installed first
+  .install(notesPlugin); // depends on auth, so auth must already be installed
+```
+
+`install` checks three things immediately, before `setup` even runs, rather than deferring any of them to boot time.
+
+- **Unique names.** A plugin name can only be installed once. Installing `notes` a second time throws.
+- **No cycles.** A plugin cannot install itself, directly or through a chain of dependencies. Circular installation throws.
+- **Dependencies come first.** Every plugin listed in `dependsOn` must already be installed. Installing `notes` before `auth` throws, even though `notes` never calls `getService` during `setup` itself.
+
+`plugin` is available as a shorter alias for `definePlugin`, if you prefer it.
+
+```ts
+import { plugin } from '@codexa/core/http';
+
+export const notesPlugin = plugin({
+  name: 'notes',
+  setup(scope) { /* ... */ },
+});
+```
+
+<Cards>
+  <Card title="Typed Config & Services" href="/docs/http/typed-config-and-services" description="Give a plugin a typed config, and expose typed services to dependents." />
+  <Card title="Middleware" href="/docs/http/middleware" description="Plugin-scoped and route-inline middleware." />
+</Cards>

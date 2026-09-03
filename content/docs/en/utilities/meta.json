@@ -1,0 +1,12 @@
+{
+  "title": "Utilities",
+  "icon": "Wrench",
+  "pages": [
+    "crypto-and-passwords",
+    "hashing",
+    "device-parsing",
+    "ttl-parsing",
+    "response-builders",
+    "query-parser"
+  ]
+}

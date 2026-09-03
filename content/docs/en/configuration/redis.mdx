@@ -1,0 +1,127 @@
+---
+title: "Redis"
+description: "A managed ioredis connection with automatic retries, connection state tracking, and an optional dedicated pub/sub client."
+---
+
+`createRedisConnection(config)` builds a managed Redis client on top of `ioredis`. Like the MongoDB and Store factories, it is lazy, the connection does not open until you call `.connect()`.
+
+```ts
+import { createRedisConnection } from '@codexa/core/config';
+
+const redis = createRedisConnection({ url: 'redis://localhost:6379' });
+
+await redis.connect();
+const client = redis.getClient();
+await client.set('hello', 'world');
+```
+
+## Configuration
+
+Provide either a full `url`, or the individual `host`/`port`/`password`/`db` fields. A `url` takes priority when both are present.
+
+```ts
+// By URL
+createRedisConnection({ url: 'redis://user:pass@host:6379/0' });
+
+// By individual fields
+createRedisConnection({
+  host: 'localhost',
+  port: 6379,
+  password: 'secret',
+  db: 0,
+});
+```
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `keyPrefix` | `'codexa::'` | Prefixed onto every command's key automatically |
+| `connectTimeoutMS` | `10000` | How long `.connect()` waits before failing |
+| `maxRetries` | `5` | How many reconnect attempts before giving up |
+| `enablePubSub` | `false` | Also opens a dedicated subscriber client alongside the main one |
+
+<Callout type="info">
+  `keyPrefix` is not applied to the pub/sub subscriber client, since channel names and key names are different namespaces in Redis. Only the main client's commands get prefixed.
+</Callout>
+
+## Connecting
+
+```ts
+await redis.connect();
+```
+
+`connect()` is safe to call more than once. A call while already connected and ready returns the existing client immediately. A call while a connection is still being established returns the same in-flight promise, so two parts of your app calling `connect()` around the same time never open two separate clients.
+
+Retries use a capped backoff: `min(attempt * 500ms, 3000ms)`, up to `maxRetries` attempts before giving up entirely. Every connection event, TCP connect, ready, error, close, reconnecting, is logged through [the logger](/docs/logger) automatically, so connection issues show up in your logs without extra instrumentation.
+
+## Reading the connection back
+
+```ts
+redis.isReady();   // boolean, true once the client reports "ready"
+redis.getClient();  // throws "Redis not connected. Call connect() first." if not yet connected
+```
+
+## Pub/Sub
+
+Redis requires a separate connection for subscribing, a client that has issued `SUBSCRIBE` cannot also run normal commands. Set `enablePubSub: true` to have `createRedisConnection` manage that second client for you.
+
+```ts
+const redis = createRedisConnection({
+  url: 'redis://localhost:6379',
+  enablePubSub: true,
+});
+await redis.connect();
+
+const subscriber = redis.getSubscriber();
+subscriber.on('message', (channel, message) => {
+  console.log(channel, message);
+});
+await subscriber.subscribe('orders.created');
+
+redis.getClient().publish('orders.created', JSON.stringify({ id: 'o_1' }));
+```
+
+`getSubscriber()` throws if `enablePubSub` was not set to `true` in the config, so a typo of intent surfaces immediately rather than as a silent no-op.
+
+### An additional dedicated subscriber
+
+`enablePubSub` gives you one managed subscriber. If a second, independent subscriber is needed, for example one plugin listening on its own channel separately from another plugin, `createSubscriberClient()` opens an additional one using the same connection config.
+
+```ts
+const pluginSubscriber = await redis.createSubscriberClient();
+pluginSubscriber.on('message', (channel, message) => { /* ... */ });
+await pluginSubscriber.subscribe('billing.invoiced');
+```
+
+<Callout type="warn">
+  A client returned by `createSubscriberClient()` is not tracked by the connection wrapper. Calling `redis.disconnect()` closes the main client and the `enablePubSub` subscriber, but not this one. Call `.quit()` on it yourself when you are done with it.
+</Callout>
+
+## Disconnecting
+
+```ts
+await redis.disconnect();
+```
+
+Closes the subscriber (if `enablePubSub` was set) and the main client gracefully.
+
+## Passing the client elsewhere
+
+`getClient()` returns the real `ioredis` client, which is exactly what [`createStore`](/docs/store/overview) and [`createEventBus`](/docs/event-bus/overview) expect for their Redis modes, so one connection can back both.
+
+```ts
+import { createStore } from '@codexa/core/store';
+import { createEventBus } from '@codexa/core/bus';
+
+const redis = createRedisConnection({ url: env.get('REDIS_URL')! });
+await redis.connect();
+
+const sessions = await createStore({ mode: 'redis', redisClient: redis.getClient() });
+
+const events = createEventBus();
+await events.initialize({ redisClient: redis.getClient(), subscribeChannels: ['orders'] });
+```
+
+<Cards>
+  <Card title="Storage Config" href="/docs/configuration/storage-config" description="Build a typed storage config from provider environment variables." />
+  <Card title="Store" href="/docs/store/overview" description="Use a Redis connection as a key value store backend." />
+</Cards>

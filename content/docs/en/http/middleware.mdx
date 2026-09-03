@@ -1,0 +1,194 @@
+---
+title: "Middleware"
+description: "Plugin-scoped middleware selected by tag patterns, and route-inline middleware scoped to a single route."
+---
+
+Codexa Core has two kinds of middleware, and they write to two different places. Plugin middleware is selected by tag patterns and writes to `ctx.state`. Inline middleware belongs to one route and writes to `ctx.locals`. Neither can read or overwrite the other's data.
+
+## Plugin middleware
+
+Define plugin middleware with `definePluginMiddleware`, and register it with `scope.use()`. The `appliedOn` option decides which routes it runs on, matched against each route's `options.tags`.
+
+```ts
+import { definePlugin, definePluginMiddleware } from '@codexa/core/http';
+
+const requireAuth = definePluginMiddleware<{
+  userId: string;
+  role: 'admin' | 'member';
+}>({
+  name: 'auth.require',
+  appliedOn: ['guarded*'],
+  priority: -20,
+  fn(ctx) {
+    const token = ctx.headers.get('authorization');
+    if (!token) {
+      return ctx.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    ctx.provide({ userId: 'u1', role: 'member' });
+  },
+  expose(data) {
+    return { userId: data.userId, role: data.role };
+  },
+});
+
+export const accountPlugin = definePlugin({
+  name: 'account',
+  setup(scope) {
+    const guarded = scope.use(requireAuth);
+
+    guarded.route({
+      method: 'GET',
+      path: '/account',
+      handler: (ctx) => ctx.json({ userId: ctx.state.userId, role: ctx.state.role }),
+      options: { name: 'account.show', tags: ['guarded:account'] },
+    });
+  },
+});
+```
+
+### The provide and expose pattern
+
+Two functions cooperate inside a middleware, whether it is plugin middleware or inline middleware, and they always come as a pair.
+
+- **`ctx.provide(data)`** is called inside `fn`, and hands data to the framework. It only exists on the `ctx` a middleware receives, a route handler's `ctx` has no `provide` method at all, since providing data only makes sense before the handler runs.
+- **`expose(data)`** receives exactly what `provide` was called with, and returns the subset of it that should actually become readable state. `provide` and `expose` are separate on purpose: a middleware can look up far more internally, a full user record, a decoded token, than it exposes, keeping unrelated fields out of `ctx.state`.
+
+What `expose` returns is **merged** into `ctx.state`, not used to replace it. `requireAuth` above adds `userId` and `role` without touching `requestId` or `startTime`, which are already there from the framework, or anything an earlier middleware already added.
+
+```ts
+fn(ctx) {
+  ctx.provide({ userId: 'u1', role: 'member', internalRiskScore: 0.02 });
+},
+expose(data) {
+  // internalRiskScore never reaches ctx.state, only these two do
+  return { userId: data.userId, role: data.role };
+},
+```
+
+If `fn` returns a `Response`, as `requireAuth` does when the token is missing, the framework stops right there. The route handler never runs, and no later middleware runs either.
+
+### Returning a response or throwing
+
+A middleware can also throw instead of returning a `Response`, which is the more common choice for a guard that has its own error type. A thrown error skips the handler exactly like a returned response does, but it also reaches [`onException` and any `onError` hooks](/docs/http/hooks) with the real error attached, instead of a plain 401 with no error detail.
+
+```ts
+class UnauthorizedError extends Error {
+  readonly status = 401;
+}
+
+const requireAuth = definePluginMiddleware<{ userId: string }>({
+  name: 'auth.require',
+  appliedOn: ['guarded*'],
+  fn(ctx) {
+    const token = ctx.headers.get('authorization');
+    if (!token) {
+      throw new UnauthorizedError('Missing bearer token');
+    }
+    ctx.provide({ userId: 'u1' });
+  },
+  expose(data) {
+    return { userId: data.userId };
+  },
+});
+```
+
+Pair this with `app.onException` to turn your own error types into the right status code in one place, rather than repeating status logic in every guard. See [Dispatch & Lifecycle](/docs/http/dispatch-and-lifecycle) for how `onException` fits into request handling.
+
+### Middleware factories
+
+A middleware does not have to be a fixed constant. A function that returns `definePluginMiddleware(...)` or `defineMiddleware(...)` lets the same middleware be reused with different configuration per route or per plugin, such as a permission guard that needs a different required permission on each route it protects.
+
+```ts
+function requirePermission(permission: string) {
+  return defineMiddleware<{ granted: true }>({
+    fn(ctx) {
+      const permissions = ctx.headers.get('x-permissions')?.split(',') ?? [];
+      if (!permissions.includes(permission)) {
+        throw new UnauthorizedError(`Missing permission: ${permission}`);
+      }
+      ctx.provide({ granted: true });
+    },
+    expose(data) {
+      return data;
+    },
+  });
+}
+
+scope.route({
+  method: 'DELETE',
+  path: '/posts/:id',
+  handler: (ctx) => ctx.json({ deleted: ctx.params.id }),
+  options: {
+    name: 'posts.delete',
+    middleware: [requirePermission('posts:delete')] as const,
+  },
+});
+```
+
+### Tag patterns
+
+`appliedOn` matches against each route's `options.tags`, using a small pattern language.
+
+| Pattern | Meaning |
+| --- | --- |
+| `*` | Every route registered by this plugin |
+| `guarded` | An exact tag match |
+| `guarded*` | Any tag starting with `guarded` |
+| `*account` | Any tag ending with `account` |
+| `*guarded*` | Any tag containing `guarded` |
+
+A `*` can only appear at the very start or the very end of a pattern, not in the middle. Middleware registered without `appliedOn` is still created, but it will not run on any route until you give it a pattern to match.
+
+### Ordering with priority
+
+When more than one plugin middleware applies to the same route, `priority` decides the order they run in. A lower number runs earlier. Middleware without an explicit `priority` defaults to `0`.
+
+```ts
+const requestId = definePluginMiddleware({
+  name: 'request.id',
+  appliedOn: ['*'],
+  priority: -100, // runs before requireAuth's -20
+  fn(ctx) {
+    console.log('handling', ctx.request.method, ctx.url.pathname);
+  },
+});
+```
+
+## Inline middleware
+
+Inline middleware belongs to a single route. Define it with `defineMiddleware`, and list it in that route's `options.middleware` array. It uses the exact same [provide and expose pattern](#the-provide-and-expose-pattern) as plugin middleware, `ctx.provide(data)` inside `fn`, then `expose(data)` decides what becomes readable, only the destination changes: the result lands on `ctx.locals`, not `ctx.state`.
+
+```ts
+import { defineMiddleware } from '@codexa/core/http';
+
+const tenantLocal = defineMiddleware<{ tenantId: string }>({
+  fn(ctx) {
+    ctx.provide({ tenantId: ctx.headers.get('x-tenant-id') ?? 'default' });
+  },
+  expose(data) {
+    return { tenantId: data.tenantId };
+  },
+});
+
+scope.route({
+  method: 'GET',
+  path: '/tenant',
+  handler: (ctx) => ctx.json({ tenantId: ctx.locals.tenantId }),
+  options: {
+    name: 'tenant.current',
+    tags: ['tenant:get'],
+    middleware: [tenantLocal] as const,
+  },
+});
+```
+
+Inline middleware has no `appliedOn` and no `name`, since it only ever applies to the one route that lists it. TypeScript infers `ctx.locals.tenantId` on that route's handler automatically from the `middleware` array, with no manual typing needed.
+
+## Choosing between them
+
+Reach for plugin middleware when a rule applies to several routes inside the same plugin, such as requiring authentication on every route tagged `guarded*`. Reach for inline middleware when something is specific to one route, such as reading a header that only one endpoint cares about.
+
+<Cards>
+  <Card title="Plugins" href="/docs/http/plugins" description="Where scope.use() and scope.route() come from." />
+  <Card title="Hooks" href="/docs/http/hooks" description="Observe every request after it finishes, instead of intercepting it before it runs." />
+</Cards>

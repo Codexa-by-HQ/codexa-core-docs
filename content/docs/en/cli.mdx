@@ -1,0 +1,225 @@
+---
+title: "CLI"
+description: "The codexa plugin CLI: pull a plugin's source into your project from a pinned Git ref, with full rollback if anything fails."
+icon: "Terminal"
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { TypeTable } from 'fumadocs-ui/components/type-table';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+`@codexa/core/cli` installs a plugin's actual source code into your project, copied from a GitHub repository at an exact, pinned commit or tag. This is a different kind of "install" than [`app.install(plugin, config)`](/docs/http/plugins#installing-more-than-one-plugin), which registers an already-imported plugin object into a running app. The CLI is what gets that plugin's code onto disk in the first place.
+
+```bash
+codexa plugin add https://github.com/Codexa-by-HQ/oauth --ref v1.0.0
+codexa plugin list
+```
+
+## Getting the codexa command
+
+The CLI only ever touches the filesystem and shells out to `git` and `deno` itself, so it needs exactly those permissions, nothing broader. Set it up either as a global command, or scoped to one project as a `deno task`.
+
+<Tabs items={['Global install', 'Project deno task']}>
+
+<Tab value="Global install">
+
+A one-time install puts `codexa` on your `PATH`, usable from any project afterward.
+
+```bash
+deno install --global --allow-read --allow-write --allow-run=git,deno -n codexa jsr:@codexa/core/cli
+```
+
+```bash
+codexa plugin add https://github.com/Codexa-by-HQ/oauth --ref v1.0.0
+```
+
+</Tab>
+
+<Tab value="Project deno task">
+
+No global install, and the exact CLI version used is pinned per project alongside your other dependencies.
+
+```json title="deno.json"
+{
+  "tasks": {
+    "codexa": "deno run --allow-read --allow-write --allow-run=git,deno jsr:@codexa/core/cli"
+  }
+}
+```
+
+```bash
+deno task codexa plugin add https://github.com/Codexa-by-HQ/oauth --ref v1.0.0
+```
+
+</Tab>
+
+</Tabs>
+
+<Callout type="info">
+  `--allow-run=git,deno` scopes the permission to exactly the two subprocesses the CLI actually runs, `git` to fetch the plugin's source, and `deno` for the `deno install` and `deno check` steps below. A bare `--allow-run` would also work, but grants more than the CLI needs.
+</Callout>
+
+## Adding a plugin
+
+```bash
+codexa plugin add <github-url> --ref <tag-or-commit> [--project <directory>]
+```
+
+- `<github-url>` must be a public `https://github.com/<owner>/<repo>` URL. Any other host, a private repository URL requiring auth, or a URL with extra path segments is rejected before anything is cloned.
+- `--ref` is required, on purpose. There is no "latest" or default branch install, every install pins an exact tag or commit, so two people running the same command get the exact same code.
+- `--project` points at the host project. Defaults to the current directory.
+
+## What happens during install
+
+<Steps>
+
+<Step>
+
+### The repository is fetched at exactly that ref
+
+A shallow, single-ref clone, not a full repository history, checked out into a temporary directory.
+
+```bash
+git fetch --depth 1 origin v1.0.0
+git checkout --detach FETCH_HEAD
+```
+
+</Step>
+
+<Step>
+
+### The plugin manifest is validated
+
+The repository must contain a `plugin.json` at its root, and its `name`, `version`, and `entrypoint` must match the plugin's own `deno.json` exactly. A mismatch, or a missing `plugin.json`, fails the install before anything touches your project.
+
+</Step>
+
+<Step>
+
+### The plugin's source is copied into `plugins/<id>`
+
+Copied into a staging directory first, then moved into place atomically, so a failure partway through never leaves a half-copied plugin directory behind. The `.git` directory from the clone is left out entirely, a symbolic link anywhere in the plugin fails the install outright, and the copy stops with an error past 10,000 files or 100&nbsp;MB total, whichever comes first.
+
+</Step>
+
+<Step>
+
+### Your project's `deno.json` gains a workspace member
+
+```json title="deno.json"
+{
+  "workspace": ["./plugins/oauth"]
+}
+```
+
+</Step>
+
+<Step>
+
+### `deno install` and `deno check` run against the new plugin
+
+Both run by default, catching a broken or incompatible plugin immediately rather than on your next `deno task dev`.
+
+</Step>
+
+<Step>
+
+### The install is recorded
+
+Written to `.codexa/plugins.json` in your project, a plain record of what is installed, from where, and at which commit. Nothing here executes plugin code, it is purely metadata.
+
+</Step>
+
+</Steps>
+
+<Callout type="warn">
+  If any step fails, everything already changed is rolled back: `deno.json`, `deno.lock`, and `.codexa/plugins.json` are all restored to exactly what they were before the command ran, and any copied plugin files are removed. An interrupted or failed install never leaves your project half-changed.
+</Callout>
+
+## The plugin.json manifest
+
+Every installable plugin repository needs one, at its root.
+
+<TypeTable
+  type={{
+    schemaVersion: {
+      description: 'Manifest format version.',
+      type: '1',
+      required: true,
+    },
+    id: {
+      description: 'Folder name the plugin installs under, plugins/<id>. Lowercase letters, numbers, and hyphens only.',
+      type: 'string',
+      required: true,
+    },
+    name: {
+      description: 'The @scope/name format, and must match the name field in the plugin\'s own deno.json.',
+      type: 'string',
+      required: true,
+    },
+    version: {
+      description: 'A semantic version, and must match the version field in the plugin\'s own deno.json.',
+      type: 'string',
+      required: true,
+    },
+    entrypoint: {
+      description: 'Must match the "." entry of exports in the plugin\'s own deno.json.',
+      type: 'string',
+      required: true,
+    },
+    setup: {
+      description: 'Optional path to a setup or bootstrap script, for your own reference.',
+      type: 'string',
+    },
+    codexaCore: {
+      description: 'Optional semver range, such as ">=1.0.5 <2.0.0", documenting which Codexa Core versions the plugin targets.',
+      type: 'string',
+    },
+  }}
+/>
+
+A real example, from the official OAuth plugin:
+
+```json title="plugin.json"
+{
+  "schemaVersion": 1,
+  "id": "oauth",
+  "name": "@codexa/oauth",
+  "version": "1.0.0",
+  "entrypoint": "./plugin.ts",
+  "setup": "./scripts/bootstrap.ts",
+  "codexaCore": ">=1.0.5 <2.0.0"
+}
+```
+
+<Callout type="info">
+  A plugin's own `deno.json` cannot define workspace-level options such as `workspace`, `lock`, `nodeModulesDir`, or `unstable`. Those belong to the host project's root config, since the plugin is installed as a member of your workspace, not a standalone project.
+</Callout>
+
+## Listing installed plugins
+
+```bash
+codexa plugin list
+```
+
+```
+oauth   @codexa/oauth@1.0.0   ./plugins/oauth
+```
+
+This reads `.codexa/plugins.json` directly. It never imports or runs any installed plugin's code, so it is safe to run against a project you have not audited yet.
+
+## After installing
+
+The CLI's job ends once the plugin's source is on disk, a Deno workspace member, and recorded in the registry. Wiring the plugin into your running app is the normal [`app.install(plugin, config)`](/docs/http/resource-composition) call, typically from an async installer function if the plugin needs its own database or Redis connection.
+
+```ts title="main.ts"
+import { installOAuthPlugin } from './plugins/oauth/plugin.ts';
+
+const app = createApp();
+await installOAuthPlugin(app, { /* ... */ });
+```
+
+<Cards>
+  <Card title="Official Plugins" href="/docs/official-plugins/oauth" description="The plugin this page's examples are drawn from." />
+  <Card title="Resource Composition" href="/docs/http/resource-composition" description="The async-installer pattern a plugin with real dependencies typically needs." />
+</Cards>

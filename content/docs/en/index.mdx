@@ -1,0 +1,140 @@
+---
+title: "Introduction"
+description: "A modular, plugin-first toolkit for building Deno backends, with an HTTP layer that also runs on Bun, Cloudflare Workers, and Node.js."
+icon: "BookOpen"
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Braces, Database, Server, Settings } from 'lucide-react';
+
+Codexa Core targets Deno as its primary runtime, but keeps its HTTP layer runtime neutral by design. Every request handler is a plain function that accepts a standard `Request` and returns a standard `Response`. This is what lets the same application run on Bun and Cloudflare Workers unchanged, and on Node.js with a small Fetch API adapter.
+
+Instead of one large bundle, the framework ships as small, focused packages. A project imports only the parts it needs:
+
+- An HTTP layer built on a radix tree router
+- An OpenAPI 3.1 generator
+- Environment and database configuration
+- An event bus
+- A key value store
+- A cache
+- A storage manager for local disk, S3, Cloudinary, and ImageKit
+- A command line tool, installed and used separately, for pulling plugin source from a Git repository
+
+<Cards>
+  <Card icon={<Server />} title="HTTP" href="/docs/http/overview" description="The plugin-first request layer this whole toolkit is built around." />
+  <Card icon={<Braces />} title="OpenAPI" href="/docs/openapi/generating-documents" description="Generate a real OpenAPI 3.1 document from route metadata." />
+  <Card icon={<Settings />} title="Configuration" href="/docs/configuration/environment-variables" description="Typed environment variables, MongoDB, Redis, and storage config." />
+  <Card icon={<Database />} title="Store" href="/docs/store/overview" description="Memory, Redis, or Deno KV, behind one key value interface." />
+</Cards>
+
+## Plugin first
+
+Every capability in Codexa Core, from a single health check route to a full authentication system, is built as a plugin. A plugin owns its routes, middleware, version header, and lifecycle hooks. It exposes services to other plugins only when it explicitly chooses to.
+
+```ts
+import { createApp, definePlugin } from '@codexa/core/http';
+
+const healthPlugin = definePlugin({
+  name: 'health',
+  setup(scope) {
+    scope.route({
+      method: 'GET',
+      path: '/health',
+      handler: (ctx) => ctx.json({ ok: true }),
+      options: { name: 'health.check', tags: ['public', 'health'] },
+    });
+  },
+});
+
+const app = createApp('api').install(healthPlugin);
+
+Deno.serve(app.dispatch);
+```
+
+Another plugin can only reach `health` if it lists `health` in `dependsOn`, and only through whatever `health` exposes with `exposeService`. This ownership model keeps a large application predictable as more plugins are added.
+
+<Callout type="info">
+  See [Plugins](/docs/http/plugins) for the full plugin shape, and [Typed Config & Services](/docs/http/typed-config-and-services) for how one plugin exposes a typed service to another.
+</Callout>
+
+## Runs wherever the Fetch API runs
+
+This portability comes from `app.dispatch`, the single function every runtime hands a request to. Pass it directly to whichever server or platform you deploy to.
+
+<Tabs items={['Deno', 'Bun', 'Cloudflare Workers', 'Node.js']}>
+
+<Tab value="Deno">
+
+```ts
+Deno.serve(app.dispatch);
+```
+
+</Tab>
+
+<Tab value="Bun">
+
+```ts
+Bun.serve({ port: 3000, fetch: app.dispatch });
+```
+
+</Tab>
+
+<Tab value="Cloudflare Workers">
+
+```ts
+export default { fetch: app.dispatch };
+```
+
+</Tab>
+
+<Tab value="Node.js">
+
+Node does not accept a `fetch` handler directly, so a small Fetch API adapter such as `@hono/node-server` bridges the two.
+
+```ts
+import { serve } from '@hono/node-server';
+
+serve({ fetch: app.dispatch, port: 3000 });
+```
+
+</Tab>
+
+</Tabs>
+
+<Callout type="info">
+  `dispatch` also works without a server. Call `await app.dispatch(new Request('http://localhost/health'))` directly inside a test, a background job, or another framework's route handler.
+</Callout>
+
+JSR's own compatibility check confirms this for Node.js, Deno, Bun, and browsers. Cloudflare Workers support is demonstrated in the framework's source, though JSR has not yet run its automated check for that platform.
+
+## Subpath imports
+
+Each capability below is its own subpath, so a project that only needs the HTTP layer never loads the MongoDB driver or the Redis client.
+
+| Import | Purpose |
+| --- | --- |
+| `@codexa/core/http` | Plugin first HTTP framework, built on the Fetch API and a radix tree router |
+| `@codexa/core/openapi` | OpenAPI 3.1 document generator, built from route metadata |
+| `@codexa/core/config` | Environment variables, MongoDB, Redis, and storage configuration |
+| `@codexa/core/bus` | Local or Redis backed event bus |
+| `@codexa/core/store` | Memory, Redis, or Deno KV key value store |
+| `@codexa/core/cache` | Namespaced cache built on top of a store |
+| `@codexa/core/storage` | Local disk, S3, Cloudinary, and ImageKit storage manager |
+| `@codexa/core/providers` | Re-exported third party packages Codexa Core depends on |
+| `@codexa/core/logger` | Structured logger |
+| `@codexa/core/crypto` | ID generation and password hashing |
+| `@codexa/core/hash` | SHA and HMAC helpers |
+| `@codexa/core/device` | User agent parsing |
+| `@codexa/core/ttl` | Duration string parsing, such as turning `'15m'` into seconds |
+| `@codexa/core/response` | Standard response payload builders |
+| `@codexa/core/query` | Query string parsing |
+| `@codexa/core/cli` | The `codexa plugin` command, for installing plugins from a Git repository |
+
+## Where the code lives
+
+Codexa Core is published on JSR as [`@codexa/core`](https://jsr.io/@codexa/core), currently at version 1.0.5 with a JSR score of 100 percent. The source lives on GitHub at [Codexa-by-HQ/codexa-core](https://github.com/Codexa-by-HQ/codexa-core), under the MIT license.
+
+<Cards>
+  <Card title="Installation" href="/docs/installation" description="Install Codexa Core from JSR, and set up subpath imports for the runtime you use." />
+  <Card title="Quick Start" href="/docs/quick-start" description="Build a small application and run it end to end." />
+</Cards>

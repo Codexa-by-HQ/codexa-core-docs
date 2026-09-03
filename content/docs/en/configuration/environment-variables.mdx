@@ -1,0 +1,128 @@
+---
+title: "Environment Variables"
+description: "Load and validate environment variables with a Zod schema, and get a fully typed config object back with autocomplete on every key."
+---
+
+`@codexa/core/config` exports a ready-to-use `env` singleton. Call `loadEnv()` once when your app starts, before you read any variable from it.
+
+```ts
+import { env } from '@codexa/core/config';
+import { zod } from '@codexa/core/providers/zod';
+
+const config = await env.loadEnv({
+  schema: zod.object({
+    PORT: zod.coerce.number().default(8080),
+    JWT_SECRET: zod.string().min(32),
+    NODE_ENV: zod.enum(['development', 'production', 'test']).default('development'),
+  }),
+});
+
+config.PORT       // number, with autocomplete
+config.JWT_SECRET // string, with autocomplete
+```
+
+Passing a `schema` is what makes `config` typed. Without one, `loadEnv()` still works, it just returns the raw merged variables as plain strings with no validation.
+
+```ts
+await env.loadEnv(); // loads .env, no validation
+const port = env.get('PORT'); // string | undefined
+```
+
+## Where the values come from
+
+`loadEnv(options)` merges two sources, in this order.
+
+1. **`.env` files**, read from `options.paths` (default `['.env']`). Multiple paths are merged left to right, so a later file overrides an earlier one, a common way to layer `.env` and `.env.local`. A path that does not exist is skipped silently, not treated as an error.
+2. **The real system environment**, always applied last, so it always wins over anything in a `.env` file. This is what lets a container or CI environment variable override a local `.env` file without editing it.
+
+```ts
+await env.loadEnv({
+  paths: ['.env', '.env.local'],
+  schema: zod.object({
+    DATABASE_URL: zod.string(),
+  }),
+});
+```
+
+Set `loadFiles: false` to skip reading any file at all and validate only real system environment variables, the shape a container typically runs in.
+
+```ts
+await env.loadEnv({
+  loadFiles: false,
+  schema: mySchema,
+});
+```
+
+## When validation fails
+
+If the merged variables do not satisfy `schema`, `loadEnv()` logs every failing field through [the logger](/docs/logger) at `fatal` level, one line per field, then throws.
+
+```
+[fatal] Environment validation failed:
+[fatal]   [JWT_SECRET] String must contain at least 32 character(s)
+[fatal]   [PORT] Expected number, received nan
+```
+
+```ts
+try {
+  await env.loadEnv({ schema: mySchema });
+} catch {
+  // Already logged above. Exit non-zero so a bad deploy fails fast.
+  Deno.exit(1);
+}
+```
+
+Catching the error is optional. Left uncaught, a missing or malformed required variable stops your app from booting with a message that already names the exact field and why it failed, rather than a downstream crash from `undefined` reaching code that expected a string.
+
+## Reading values after loading
+
+```ts
+env.get('PORT');       // string | undefined, untyped, works even for keys outside your schema
+env.getAll();           // the full config object
+env.getConfig<MyEnv>(); // the config object, cast to a type you supply
+```
+
+Prefer the object `loadEnv()` returns when you have it in scope. `env.get()` exists for code that runs later, in a different module, where re-importing the schema is not convenient. It also falls back to the real system environment for any key that was not part of your schema.
+
+## Utility getters
+
+A handful of small helpers cover the conversions every project ends up writing by hand.
+
+```ts
+env.enabled('FEATURE_BETA');       // true for "true", "1", "yes", "on" (case-insensitive), false otherwise
+env.number('WORKER_COUNT', 4);     // parses to a number, falls back to 4 if absent or not a number
+env.list('ALLOWED_ORIGINS');       // "a.com, b.com" -> ["a.com", "b.com"], trimmed, empty entries removed
+```
+
+## Checking the current environment
+
+```ts
+env.is('staging');     // NODE_ENV === 'staging'
+env.isDevelopment();   // NODE_ENV === 'development'
+env.isProduction();    // NODE_ENV === 'production'
+env.isTest();          // NODE_ENV === 'test'
+```
+
+## One shared instance, or several independent ones
+
+`env` is a singleton, the same instance everywhere it is imported, which is what you want for a single running application. `Environment.getInstance()` returns that same singleton directly, and is what `env` is built from.
+
+```ts
+import { Environment } from '@codexa/core/config';
+
+const env = Environment.getInstance(); // the exact same object as the `env` export
+```
+
+Construct `new Environment()` directly instead when you need an isolated instance, most often in a test that loads a different `.env` file per test case without affecting the app's shared `env`.
+
+```ts
+import { Environment } from '@codexa/core/config';
+
+const testEnv = new Environment();
+await testEnv.loadEnv({ paths: ['.env.test'], schema: mySchema });
+```
+
+<Cards>
+  <Card title="Database (MongoDB)" href="/docs/configuration/database" description="Turn a validated DATABASE_URL into a connected database." />
+  <Card title="Storage Config" href="/docs/configuration/storage-config" description="Build a typed storage config from provider-specific environment variables." />
+</Cards>

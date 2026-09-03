@@ -1,0 +1,59 @@
+---
+title: "Registry"
+description: "Named storage managers, useful when a project uploads to more than one provider or bucket."
+---
+
+`createStorageRegistry()` holds several independently configured storage managers under a name, useful when different kinds of assets go to different places, avatars on ImageKit, invoices on S3, for example.
+
+```ts
+import { createStorageRegistry } from '@codexa/core/storage';
+
+const storages = createStorageRegistry();
+
+const mediaStorage = storages.register('media', cloudinaryConfig);
+const invoiceStorage = storages.register('invoices', s3Config);
+
+await mediaStorage.upload(imageBytes, { folder: 'products' });
+await invoiceStorage.upload(pdfBytes, { folder: 'invoices' });
+```
+
+Once registered, `storages.get('media')` from anywhere else in your code reaches the same manager, without threading it through function arguments or module-level exports by hand.
+
+## Reading the registry back
+
+```ts
+storages.has('media');   // boolean
+storages.names();        // readonly string[]
+storages.get('media');   // throws if not registered
+```
+
+```ts
+storages.register('media', cloudinaryConfig);
+storages.register('media', cloudinaryConfig); // throws: Storage manager "media" is already registered.
+```
+
+Registering the same name twice throws rather than silently replacing the first manager, the same rule [Store](/docs/store/registry) and [Event Bus](/docs/event-bus/overview) registries follow.
+
+## Registering a custom adapter
+
+`register` takes an optional third argument, an adapter instance, that bypasses provider auto-resolution entirely. Useful for a custom S3-compatible service `buildStorageConfig` does not have a preset for, or for swapping in a fake adapter in tests.
+
+```ts
+const invoiceStorage = storages.register('invoices', s3Config, new MyMinioAdapter(s3Config));
+```
+
+## No connections to close
+
+```ts
+storages.remove('media'); // drops the reference, returns the manager if it existed
+storages.clear();         // drops every reference
+```
+
+<Callout type="info">
+  Unlike a store or event bus registry, there is no `close` or `closeAll` here. A `StorageManager` does not hold a long-lived connection of its own, `remove` and `clear` only forget the registry's reference to it. If you built a custom adapter that does own a connection, such as a hand-rolled MinIO client, manage that connection's lifecycle in the plugin or app that created it, the same ownership rule covered in [Resource Composition](/docs/http/resource-composition).
+</Callout>
+
+<Cards>
+  <Card title="Overview" href="/docs/storage/overview" description="Uploading, deleting, and signed URLs, provider-agnostic." />
+  <Card title="Providers Reference" href="/docs/storage/providers-reference" description="The environment variables each config in this example needs." />
+</Cards>

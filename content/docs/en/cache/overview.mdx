@@ -1,0 +1,82 @@
+---
+title: "Overview"
+description: "A namespaced cache built on top of a store, with TTLs, tag-based invalidation, and a cache-aside helper."
+---
+
+`createCache(namespace, options)` wraps a [store](/docs/store/overview) with cache semantics: a default TTL, key namespacing, and tags that let you invalidate many keys at once without tracking them yourself.
+
+```ts
+import { createStore } from '@codexa/core/store';
+import { createCache } from '@codexa/core/cache';
+
+const routeStore = await createStore({ mode: 'redis', redisClient: redis.getClient() });
+const usersCache = createCache('users', { defaultTtl: 300, store: routeStore });
+
+const user = await usersCache.getOrSet(
+  'u1',
+  () => fetchUserFromDatabase('u1'),
+  { ttl: 600, tags: ['user:u1'] },
+);
+
+await usersCache.invalidateTag('user:u1');
+```
+
+Every cache namespace captures its own store instance at creation time. Two caches with the same namespace name but different stores never share data, and omitting `store` falls back to the [default application store](/docs/store/legacy-store-api), which must already be initialized.
+
+## Core operations
+
+```ts
+await usersCache.set('u1', userData, { ttl: 600, tags: ['user:u1'] });
+await usersCache.get<User>('u1');    // T | null
+await usersCache.has('u1');          // boolean
+await usersCache.del('u1');
+```
+
+Keys are namespaced automatically, `usersCache.set('u1', ...)` actually stores under `codexa_cache::users:u1`, so two caches never collide even on a shared store. Override the prefix with `options.prefix` if you need a specific key shape.
+
+## Cache-aside with getOrSet
+
+```ts
+const user = await usersCache.getOrSet(
+  'u1',
+  () => fetchUserFromDatabase('u1'),
+  { ttl: 600 },
+);
+```
+
+Reads the cache first. On a miss, calls `compute()`, stores the result, and returns it, the standard cache-aside pattern in one call instead of a manual get-then-set.
+
+## Tag-based invalidation
+
+A tag groups keys that should expire together, without you having to remember every key that belongs to a tag.
+
+```ts
+await usersCache.set('u1', user, { tags: ['user:u1', 'org:acme'] });
+await usersCache.set('u2', user2, { tags: ['org:acme'] });
+
+await usersCache.invalidateTag('org:acme'); // removes both u1 and u2
+await usersCache.invalidateTags(['org:acme', 'user:u1']); // several tags at once
+```
+
+<Callout type="info">
+  A tag is itself stored as a small key holding the list of tagged keys, with a TTL slightly longer than the entries it tracks (`ttl + 60` seconds), so the tag registry does not outlive its own entries by much, but also does not expire moments before them.
+</Callout>
+
+## Clearing a whole namespace
+
+```ts
+await usersCache.flush(); // deletes every key under this cache's prefix
+```
+
+## The default cache
+
+```ts
+import { cache } from '@codexa/core/cache';
+```
+
+A ready-made namespace, `'global'`, for quick one-off caching without setting up your own. Prefer a named `createCache` instance for anything owned by a specific plugin.
+
+<Cards>
+  <Card title="Store" href="/docs/store/overview" description="The interface a cache's backing store must implement." />
+  <Card title="Resource Composition" href="/docs/http/resource-composition" description="Passing a cache instance into a plugin through its install config." />
+</Cards>

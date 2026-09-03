@@ -1,0 +1,62 @@
+---
+title: "Hashing"
+description: "SHA-1 through SHA-512 digests and HMAC signing, on the Web Crypto API, for checksums and signatures rather than passwords."
+---
+
+`@codexa/core/hash` covers general-purpose hashing and HMAC signing. For hashing a password specifically, use [`hashPassword`](/docs/utilities/crypto-and-passwords) instead, it adds salting and iteration that a plain digest deliberately does not.
+
+## Digests
+
+```ts
+import { sha256, sha1, sha384, sha512 } from '@codexa/core/hash';
+
+const digest = await sha256('payload');       // lowercase hex
+const digest2 = await sha256(new Uint8Array([1, 2, 3])); // bytes work too
+```
+
+Every digest function accepts a `string` or a `Uint8Array`. `createHash(algorithm, data)` is the general form behind all four, and `createHashBase64` returns the same digest base64-encoded instead of hex.
+
+```ts
+import { createHash, createHashBase64 } from '@codexa/core/hash';
+
+await createHash('SHA-256', 'payload');
+await createHashBase64('SHA-256', 'payload');
+```
+
+## HMAC
+
+An HMAC proves both integrity and authenticity, that data was not altered, and that whoever produced it knew the secret, which a plain digest cannot do on its own.
+
+```ts
+import { hmacSha256 } from '@codexa/core/hash';
+
+const signature = await hmacSha256(webhookSecret, requestBody); // lowercase hex
+```
+
+```ts
+import { timingSafeEqual } from '@codexa/core/crypto';
+
+const expected = await hmacSha256(webhookSecret, requestBody);
+if (!timingSafeEqual(receivedSignature, expected)) {
+  return ctx.json({ error: 'Invalid signature' }, { status: 401 });
+}
+```
+
+Always compare a received signature with [`timingSafeEqual`](/docs/utilities/crypto-and-passwords), never `===`, the same reasoning as comparing any other secret.
+
+`hmacHex(secret, data, algorithm)` accepts an algorithm explicitly, `hmacSha1` is the SHA-1 equivalent, and `hmacRaw` returns the raw `Uint8Array` signature instead of hex, for callers that need the bytes directly.
+
+## Bytes to hex
+
+```ts
+import { bytesToHex } from '@codexa/core/hash';
+
+bytesToHex(new Uint8Array([163, 249, 28, 123])); // "a3f91c7b"
+```
+
+The same hex-encoding helper every function on this page uses internally, exported directly for when you already have raw bytes from somewhere else, such as `crypto.subtle.sign` called manually.
+
+<Cards>
+  <Card title="Crypto & Passwords" href="/docs/utilities/crypto-and-passwords" description="Password hashing, IDs, and constant-time comparison." />
+  <Card title="Response Builders" href="/docs/utilities/response-builders" description="A common place to send a 401 after a failed signature check." />
+</Cards>

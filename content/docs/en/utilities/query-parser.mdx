@@ -1,0 +1,48 @@
+---
+title: "Query Parser"
+description: "Parse a query string into a nested object, including repeated keys and bracket notation."
+---
+
+`ctx.query` inside a route handler is a plain `URLSearchParams`, which has no concept of nesting or repeated-key arrays. `parseQueryParams` fills that gap for a query string with real structure.
+
+```ts
+import { parseQueryParams } from '@codexa/core/query';
+
+parseQueryParams('page=1&limit=20&sort[field]=name');
+// { page: '1', limit: '20', sort: { field: 'name' } }
+
+parseQueryParams('tags[]=a&tags[]=b');
+// { tags: ['a', 'b'] }
+
+parseQueryParams('?page=1'); // leading "?" is stripped automatically
+// { page: '1' }
+```
+
+Every value comes back as a string, or nested strings, `parseQueryParams` does no type coercion. Convert `page` to a number yourself, or validate the whole result with a Zod schema, the same schema you would also use for [OpenAPI](/docs/openapi/generating-documents) query documentation.
+
+## In a route handler
+
+```ts
+scope.route({
+  method: 'GET',
+  path: '/products',
+  handler: (ctx) => {
+    const query = parseQueryParams(ctx.url.search);
+    // query.filters?.status, query.sort, etc.
+    return ctx.json({ query });
+  },
+});
+```
+
+## Passing options through
+
+`parseQueryParams` accepts the same options `qs` itself does, as a second argument, for cases the defaults do not cover.
+
+```ts
+parseQueryParams(search, { depth: 3, parameterLimit: 50 });
+```
+
+<Cards>
+  <Card title="Response Helpers" href="/docs/http/response-helpers" description="ctx.query as a plain URLSearchParams, and everything ctx can build." />
+  <Card title="Providers" href="/docs/providers" description="The qs package this parser is built on." />
+</Cards>

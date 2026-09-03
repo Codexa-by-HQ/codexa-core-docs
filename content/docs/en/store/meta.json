@@ -1,0 +1,5 @@
+{
+  "title": "Store",
+  "icon": "Database",
+  "pages": ["overview", "registry", "legacy-store-api"]
+}

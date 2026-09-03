@@ -1,0 +1,95 @@
+---
+title: "Storage Config"
+description: "Build a fully typed storage config from environment variables, narrowed to exactly the fields the chosen provider needs."
+---
+
+`buildStorageConfig(env)` turns a plain object of environment variables into the `StorageConfig` that [`createStorageManager`](/docs/storage/overview) expects. It is a discriminated union over one field, `STORAGE_PROVIDER`, and TypeScript enforces every other required field once that one is set.
+
+```ts
+import { buildStorageConfig } from '@codexa/core/config';
+
+const cfg = buildStorageConfig({
+  STORAGE_PROVIDER: 's3',
+  S3_BUCKET: env.get('S3_BUCKET')!,
+  S3_REGION: env.get('S3_REGION')!,
+  S3_ACCESS_KEY: env.get('S3_ACCESS_KEY')!,
+  S3_SECRET_KEY: env.get('S3_SECRET_KEY')!,
+});
+
+cfg.s3.bucket; // no type guard needed, TypeScript already knows this is the S3 branch
+```
+
+Because `STORAGE_PROVIDER: 's3'` narrows the whole object, leaving out `S3_BUCKET` here is a compile error, not a runtime surprise the first time an upload is attempted.
+
+## The four providers
+
+Each provider has its own required and optional environment shape.
+
+```ts
+// Cloudinary
+buildStorageConfig({
+  STORAGE_PROVIDER: 'cloudinary',
+  CLOUDINARY_CLOUD_NAME: env.get('CLOUDINARY_CLOUD_NAME')!,
+  CLOUDINARY_API_KEY: env.get('CLOUDINARY_API_KEY')!,
+  CLOUDINARY_API_SECRET: env.get('CLOUDINARY_API_SECRET')!,
+});
+
+// ImageKit
+buildStorageConfig({
+  STORAGE_PROVIDER: 'imagekit',
+  IMAGEKIT_PUBLIC_KEY: env.get('IMAGEKIT_PUBLIC_KEY')!,
+  IMAGEKIT_PRIVATE_KEY: env.get('IMAGEKIT_PRIVATE_KEY')!,
+  IMAGEKIT_URL_ENDPOINT: env.get('IMAGEKIT_URL_ENDPOINT')!, // e.g. https://ik.imagekit.io/myapp
+});
+
+// Local filesystem
+buildStorageConfig({
+  STORAGE_PROVIDER: 'local',
+  LOCAL_STORAGE_DIR: env.get('LOCAL_STORAGE_DIR'), // optional, defaults to './uploads'
+  LOCAL_BASE_URL: env.get('LOCAL_BASE_URL'),        // optional
+});
+```
+
+| Provider | Required | Optional |
+| --- | --- | --- |
+| `s3` | `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | `S3_ENDPOINT` (S3-compatible services like MinIO or Cloudflare R2), `S3_CDN_BASE_URL` |
+| `cloudinary` | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | none |
+| `imagekit` | `IMAGEKIT_PUBLIC_KEY`, `IMAGEKIT_PRIVATE_KEY`, `IMAGEKIT_URL_ENDPOINT` | none |
+| `local` | none | `LOCAL_STORAGE_DIR` (default `'./uploads'`), `LOCAL_BASE_URL` |
+
+## Casting from a raw environment object
+
+`Deno.env.toObject()` returns a plain `Record<string, string>`, which TypeScript cannot check against the `StorageEnv` union on its own, since it does not know which provider's fields are actually present. Cast to the specific provider type you know is active at runtime.
+
+```ts
+import { buildStorageConfig, type S3Env } from '@codexa/core/config';
+
+const cfg = buildStorageConfig(Deno.env.toObject() as S3Env);
+```
+
+<Callout type="warn">
+  Casting bypasses the compile-time field checking that makes `buildStorageConfig` worth using in the first place. Prefer building the object explicitly, one field per environment variable, as in the examples above. Reach for casting only when the environment shape is controlled entirely by your own deployment and you are confident every required field is actually set.
+</Callout>
+
+## Feeding the result to a storage manager
+
+`buildStorageConfig`'s return value is exactly what [`createStorageManager`](/docs/storage/overview) takes as its config.
+
+```ts
+import { createStorageManager } from '@codexa/core/storage';
+
+const storage = createStorageManager(
+  buildStorageConfig({
+    STORAGE_PROVIDER: 'local',
+    LOCAL_STORAGE_DIR: './uploads',
+    LOCAL_BASE_URL: 'http://localhost:8000/uploads',
+  }),
+);
+
+await storage.upload(fileBytes, { folder: 'avatars', contentType: 'image/png' });
+```
+
+<Cards>
+  <Card title="Storage" href="/docs/storage/overview" description="createStorageManager, upload(), and getSignedUploadUrl()." />
+  <Card title="Storage Providers Reference" href="/docs/storage/providers-reference" description="A closer look at what each provider does with these fields." />
+</Cards>

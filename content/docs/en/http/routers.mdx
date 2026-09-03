@@ -1,0 +1,102 @@
+---
+title: "Routers"
+description: "Group related routes into a reusable collection, and mount it inside one or more plugins."
+---
+
+A router is a plain collection of routes with no middleware, no services, and no hooks of its own. Its only purpose is to be written once and mounted wherever it is needed, which keeps a large plugin's `setup` function from growing into one long list of `scope.route()` calls.
+
+```ts
+import { createRouter, definePlugin } from '@codexa/core/http';
+
+const usersRouter = createRouter('users-router')
+  .route({
+    method: 'GET',
+    path: '/users/:id',
+    handler: (ctx) => ctx.json({ id: ctx.params.id }),
+    options: { name: 'users.show', tags: ['users:get'] },
+  })
+  .route({
+    method: 'POST',
+    path: '/users',
+    handler: async (ctx) => {
+      const body = await ctx.request.json();
+      return ctx.json({ id: crypto.randomUUID(), ...body }, { status: 201 });
+    },
+    options: { name: 'users.create', tags: ['users:create'] },
+  });
+
+export const usersPlugin = definePlugin({
+  name: 'users',
+  setup(scope) {
+    scope.mount('/api', usersRouter);
+  },
+});
+```
+
+`createRouter` takes an optional name, used in error messages and in [`inspect()`](/docs/http/inspection-and-tags) output. `.route()` returns the router itself, so calls can be chained the way `usersRouter` chains two of them above.
+
+## Mounting
+
+`scope.mount(router)` adds every route in the router as-is. `scope.mount(prefix, router)` joins `prefix` in front of each route's path first.
+
+```ts
+scope.mount(usersRouter);           // routes stay exactly as declared: /users, /users/:id
+scope.mount('/api/v1', usersRouter); // routes become: /api/v1/users, /api/v1/users/:id
+```
+
+A router can be mounted into more than one plugin, or mounted more than once with different prefixes, since mounting copies its route definitions rather than moving them.
+
+## Duplicate routes
+
+Mounting rejects a duplicate the same way direct registration does, by comparing method, path, and version together. Mounting the same router twice with the same prefix inside the same plugin throws, because both attempts would register an identical `GET /users/:id`.
+
+```ts
+scope.mount('/api', usersRouter);
+scope.mount('/api', usersRouter); // throws: Duplicate mounted route
+```
+
+## Routers are not plugins
+
+A router only holds routes. It cannot register middleware, expose services, declare `dependsOn`, or receive lifecycle hooks, since those all require a plugin's `scope`, not a router. Once a router has been mounted, its own route list is locked. Calling `.route()` on it afterward throws.
+
+<Callout type="info">
+  Reach for a router when several plugins need the exact same set of routes, or when one plugin's routes are naturally grouped and easier to read as their own file. For everything else, registering routes directly with `scope.route()` inside `setup` is simpler.
+</Callout>
+
+## A common pattern: one factory per file
+
+A plugin with many routes often reads better split into one file per domain, each exporting a function that builds and returns a router, rather than one large `setup` function.
+
+```ts title="routes/health.route.ts"
+import { createRouter } from '@codexa/core/http';
+
+export function createHealthRouter() {
+  return createRouter('orders-health').route({
+    method: 'GET',
+    path: '/health',
+    handler: (ctx) => ctx.json({ status: 'ok' }),
+    options: { name: 'orders.health', tags: ['public', 'health'] },
+  });
+}
+```
+
+```ts title="plugin.ts"
+import { definePlugin } from '@codexa/core/http';
+import { createHealthRouter } from './routes/health.route.ts';
+import { createOrdersRouter } from './routes/orders.route.ts';
+
+export const ordersPlugin = definePlugin({
+  name: 'orders',
+  setup(scope) {
+    scope.mount(createHealthRouter());
+    scope.mount('/api', createOrdersRouter());
+  },
+});
+```
+
+This keeps `setup` itself short and focused on wiring, while each router file stays testable on its own.
+
+<Cards>
+  <Card title="Versioned Routes" href="/docs/http/versioned-routes" description="Mount a router under a specific API version." />
+  <Card title="Plugins" href="/docs/http/plugins" description="Where scope.route() and scope.mount() come from." />
+</Cards>

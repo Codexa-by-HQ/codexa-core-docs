@@ -1,0 +1,188 @@
+---
+title: "Resource Composition"
+description: "Pass shared resources like a database client into a plugin through its install config, and keep resource ownership unambiguous."
+---
+
+A plugin's `setup(scope, config)` has no built-in way to reach a database, a Redis client, or any other shared resource on its own. It receives exactly what you pass as `config` to `install(plugin, config)`, and nothing else. Every dependency a plugin needs is visible right at the call site that installs it, instead of hidden behind an import of a global singleton somewhere else in the codebase.
+
+This page covers what to pass and who is responsible for closing it. For making that `config` parameter fully typed, so `install` rejects a wrong or missing resource at compile time, see [Typed Config & Services](/docs/http/typed-config-and-services). If the plugin itself came from outside your project, such as the official OAuth plugin, [pulling its source in with the CLI](/docs/cli) is the step before any of this.
+
+```ts
+import { createApp, definePlugin } from '@codexa/core/http';
+import { createStore, type StoreInstance } from '@codexa/core/store';
+
+interface NotificationsResources {
+  sessions: StoreInstance;
+}
+
+const notificationsPlugin = definePlugin<'notifications', NotificationsResources>({
+  name: 'notifications',
+  setup(scope, resources) {
+    scope.route({
+      method: 'GET',
+      path: '/notifications/:userId',
+      handler: async (ctx) => {
+        const seen = await resources.sessions.get(ctx.params.userId);
+        return ctx.json({ seen });
+      },
+    });
+  },
+});
+
+const sessions = await createStore({ mode: 'memory' });
+
+const app = createApp().install(notificationsPlugin, { sessions });
+```
+
+## Who closes what
+
+The rule is simple: **a plugin closes only the resources it created itself.** If the app creates a store and hands it to a plugin, the app owns closing it. If a plugin creates its own connection internally, that plugin closes it.
+
+```ts
+const app = createApp().install(notificationsPlugin, { sessions });
+
+app.onShutdown(async () => {
+  await sessions.close(); // the app created it, the app closes it
+});
+```
+
+This matters because the same store or client is often shared across more than one plugin. A plugin that closed a resource it did not own could break every other plugin still using it.
+
+## A plugin that owns its own resources
+
+A plugin with real external dependencies, a database connection it opens itself, for example, tends to grow past a single `definePlugin` call into an async function that prepares those resources first, and installs a plugin that closes them.
+
+```ts
+import type { ICodexaHttp } from '@codexa/core/http';
+
+interface BillingInstallConfig {
+  readonly databaseUrl: string;
+}
+
+export async function installBillingPlugin(
+  app: ICodexaHttp,
+  config: BillingInstallConfig,
+) {
+  const phase = app.getPhase();
+  if (phase === 'shutting_down' || phase === 'stopped') {
+    throw new Error('Cannot install the billing plugin after shutdown has started.');
+  }
+
+  const database = await connectToDatabase(config.databaseUrl);
+
+  try {
+    const plugin = definePlugin({
+      name: 'billing',
+      setup(scope) {
+        scope.route({
+          method: 'GET',
+          path: '/invoices/:id',
+          handler: async (ctx) => {
+            const invoice = await database.invoices.findById(ctx.params.id);
+            return ctx.json(invoice);
+          },
+        });
+
+        // The plugin closes exactly what it opened above, nothing more.
+        scope.onShutdown(() => database.close());
+      },
+    });
+    return app.install(plugin, config);
+  } catch (error) {
+    // Installation failed after the connection was already open. Close it,
+    // and surface both failures together if cleanup also fails.
+    try {
+      await database.close();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Billing plugin install and cleanup both failed.');
+    }
+    throw error;
+  }
+}
+```
+
+Three things make this safe to reuse in a real application, not just in the example above.
+
+- **`getPhase()` is checked first.** Nothing is opened at all if the app is already shutting down, so a slow install cannot race a shutdown that already started.
+- **The connection opens before `definePlugin` is called.** `setup` itself stays synchronous, as [Plugins](/docs/http/plugins) requires, because all the async work already finished by the time it runs.
+- **`app.install` is wrapped in `try`/`catch`.** If installation fails for any reason, the connection that was already opened gets closed instead of leaked, and `AggregateError` keeps both failures visible if the cleanup itself also fails.
+
+```ts
+const app = createApp();
+await installBillingPlugin(app, { databaseUrl: env.get('DATABASE_URL') });
+```
+
+## Initializing several resources at once
+
+A plugin that needs more than one independent resource, a store and an event bus, for example, should start both at once rather than one after another, but naively using `Promise.all` for that is riskier than it looks. If the second resource fails while the first is still connecting, `Promise.all` rejects immediately and stops tracking the first one, which may finish opening moments later with nothing left to close it. Use `Promise.allSettled` instead, so every resource is accounted for before deciding whether initialization succeeded.
+
+```ts
+import { createStore, type StoreInstance } from '@codexa/core/store';
+import { createEventBus, type IEventBus } from '@codexa/core/bus';
+
+interface AnalyticsResources {
+  readonly events: IEventBus;
+  readonly sessions: StoreInstance;
+}
+
+async function initializeAnalyticsResources(): Promise<AnalyticsResources> {
+  const results = await Promise.allSettled([
+    (async () => {
+      const bus = createEventBus();
+      await bus.initialize();
+      return bus;
+    })(),
+    createStore({ mode: 'redis', redisClient: sharedRedisClient }),
+  ]);
+
+  const failures = results.flatMap((r) => r.status === 'rejected' ? [r.reason] : []);
+  if (failures.length > 0) {
+    // Anything that did succeed above is now orphaned. Close what can be closed
+    // before surfacing the failure, the same way a single-resource path would.
+    throw new AggregateError(failures, 'Analytics resource initialization failed.');
+  }
+
+  const [eventsResult, sessionsResult] = results as PromiseFulfilledResult<unknown>[];
+  return {
+    events: eventsResult.value as IEventBus,
+    sessions: sessionsResult.value as StoreInstance,
+  };
+}
+```
+
+If an installer function like this might run more than once, for example because it is called from a test helper as well as from `main.ts`, cache the promise instead of re-running the work.
+
+```ts
+let resourcesPromise: Promise<AnalyticsResources> | undefined;
+
+function getAnalyticsResources(): Promise<AnalyticsResources> {
+  resourcesPromise ??= initializeAnalyticsResources();
+  return resourcesPromise;
+}
+```
+
+Two concurrent calls to `getAnalyticsResources()` now share one initialization, instead of opening two event buses by accident.
+
+## Sharing one resource across several plugins
+
+Nothing prevents the same resource from being passed to more than one plugin's config, which is the normal way to share a database connection or an event bus across a whole app.
+
+```ts
+import { createEventBus } from '@codexa/core/bus';
+
+const events = createEventBus();
+await events.initialize();
+
+const app = createApp()
+  .install(ordersPlugin, { events })
+  .install(notificationsPlugin, { events });
+
+app.onShutdown(async () => {
+  await events.close();
+});
+```
+
+<Cards>
+  <Card title="Dispatch & Lifecycle" href="/docs/http/dispatch-and-lifecycle" description="Where app.boot(setup) and getPhase() fit into startup." />
+  <Card title="Plugins" href="/docs/http/plugins" description="Why setup(scope, config) must stay synchronous." />
+</Cards>

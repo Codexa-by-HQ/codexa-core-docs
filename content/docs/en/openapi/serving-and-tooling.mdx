@@ -1,0 +1,104 @@
+---
+title: "Serving & Tooling"
+description: "Serve the generated OpenAPI document from a route, and load it into Swagger UI, Scalar, Postman, or Insomnia."
+---
+
+`serveOpenApiJson` registers a route that serves a generated document as JSON. It is a small wrapper around `generateOpenApiDocument`, meant for the common case of exposing the spec at a fixed path on the running app.
+
+```ts
+import { definePlugin } from '@codexa/core/http';
+import { serveOpenApiJson } from '@codexa/core/openapi';
+
+export const docsPlugin = definePlugin({
+  name: 'docs',
+  setup(scope) {
+    serveOpenApiJson(
+      scope,
+      app,
+      {
+        info: { title: 'Catalog API', version: '1.0.0' },
+        servers: [{ url: 'http://localhost:8000' }],
+      },
+      '/openapi.json', // optional, this is already the default
+    );
+  },
+});
+```
+
+```bash
+curl http://localhost:8000/openapi.json
+```
+
+## The document is cached after the first request
+
+`serveOpenApiJson` builds the document once, on the first request that hits it, and reuses that same object for every request after, rather than regenerating it each time.
+
+```ts
+handler: (ctx) => {
+  cached ??= generateOpenApiDocument(source, config);
+  return ctx.json(cached, { headers: { 'cache-control': 'public, max-age=3600' } });
+},
+```
+
+<Callout type="warn">
+  If routes are toggled at runtime with [`enableByTags`/`disableByTags`](/docs/http/inspection-and-tags) after `/openapi.json` has already been requested once, the cached document does not pick up that change. The served spec reflects the app's route table as it stood at the first request, for the lifetime of the process. This is rarely a problem in practice, since routes are usually toggled for maintenance windows, not moment to moment, but it is worth knowing before relying on the served document to reflect a very recent `disableByTags` call.
+</Callout>
+
+If you need a document that is always current, call `generateOpenApiDocument` directly in your own route instead of using `serveOpenApiJson`, at the cost of rebuilding it on every request.
+
+```ts
+scope.route({
+  method: 'GET',
+  path: '/openapi.json',
+  handler: (ctx) => ctx.json(generateOpenApiDocument(app, config)),
+  options: { openapi: { exclude: true, responses: { 200: { description: 'OpenAPI document' } } } },
+});
+```
+
+## The route documents itself out of the document
+
+`serveOpenApiJson`'s own route is registered with `openapi.exclude: true`, so `/openapi.json` never lists itself as a documented endpoint. Registering your own variant the way shown above should do the same, otherwise the spec ends up describing its own JSON response shape as if it were a real API resource.
+
+## Loading it into tooling
+
+The generated document is standard OpenAPI 3.1 JSON, so any compatible tool accepts it as-is, no Codexa-specific conversion step.
+
+**Swagger UI**, pointed at the served URL:
+
+```html
+<div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
+<script>
+  SwaggerUIBundle({ url: 'http://localhost:8000/openapi.json', dom_id: '#swagger-ui' });
+</script>
+```
+
+**Scalar**, which renders directly from a URL with no build step:
+
+```html
+<script id="api-reference" data-url="http://localhost:8000/openapi.json"></script>
+<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+```
+
+**Postman or Insomnia**: both accept an OpenAPI URL directly through Import, generating a full request collection, one request per operation, with example bodies pulled from your Zod schemas.
+
+## Extension fields on generated operations
+
+Every operation in the document carries a few `x-codexa-*` fields alongside the standard OpenAPI ones. Most tooling ignores unrecognized `x-` fields silently, so they do not interfere with Swagger UI, Scalar, or client generators, but they are useful if you post-process the document yourself.
+
+```json
+{
+  "operationId": "get_catalog_products_show",
+  "x-codexa-route-name": "catalog.products.show",
+  "x-codexa-original-path": "/catalog/products/:id",
+  "x-codexa-plugin": "catalog",
+  "x-codexa-route-tags": ["catalog:get"]
+}
+```
+
+`x-codexa-original-path` is particularly useful if you ever need to map a generated OpenAPI path, with its `{id}` placeholders and possible `;version=` suffix, back to the exact route path Codexa Core matches internally.
+
+<Cards>
+  <Card title="Generating Documents" href="/docs/openapi/generating-documents" description="Every option generateOpenApiDocument accepts." />
+  <Card title="Inspection & Tags" href="/docs/http/inspection-and-tags" description="enableByTags and disableByTags, and how they interact with the cached document." />
+</Cards>

@@ -1,0 +1,55 @@
+---
+title: "TTL Parsing"
+description: "Turn a human-readable duration string like '15m' into seconds, milliseconds, or a future Date."
+---
+
+`parseTtlToSeconds` reads a short duration string, the kind you would otherwise hardcode as a raw number of seconds and have to mentally convert every time you read it, and turns it into seconds.
+
+```ts
+import { parseTtlToSeconds } from '@codexa/core/ttl';
+
+parseTtlToSeconds('30s'); // 30
+parseTtlToSeconds('15m'); // 900
+parseTtlToSeconds('2h');  // 7200
+parseTtlToSeconds('1d');  // 86400
+parseTtlToSeconds('1w');  // 604800
+```
+
+| Suffix | Unit |
+| --- | --- |
+| `s` | seconds |
+| `m` | minutes |
+| `h` | hours |
+| `d` | days |
+| `w` | weeks |
+
+The format is strict: one integer followed by exactly one of the suffixes above, no spaces, no decimals, no combined units like `1h30m`. Anything else throws with a message naming the invalid input.
+
+```ts
+parseTtlToSeconds('15 minutes'); // throws: Invalid TTL format
+```
+
+## Milliseconds and dates
+
+```ts
+import { parseTtlToMs, ttlToDate } from '@codexa/core/ttl';
+
+parseTtlToMs('15m');  // 900000
+ttlToDate('30m');     // a Date object 30 minutes from now
+```
+
+`ttlToDate` is the common case for an expiry timestamp to store alongside a record, rather than computing `Date.now() + parseTtlToMs(...)` by hand everywhere it is needed.
+
+## Where this shows up
+
+Most TTL-accepting options across the framework, [store](/docs/store/overview) TTLs, [cache](/docs/cache/overview) TTLs, take a plain number of seconds directly, not a string like `'15m'`. Reach for `parseTtlToSeconds` at the boundary where a duration comes from configuration or a route input as a string, and pass the resulting number into those APIs.
+
+```ts
+const ttlSeconds = parseTtlToSeconds(env.get('SESSION_TTL') ?? '30m');
+await sessions.set(sessionId, data, { ttl: ttlSeconds });
+```
+
+<Cards>
+  <Card title="Store" href="/docs/store/overview" description="Where a parsed TTL in seconds is actually used." />
+  <Card title="Environment Variables" href="/docs/configuration/environment-variables" description="Reading the raw duration string this page parses from config." />
+</Cards>

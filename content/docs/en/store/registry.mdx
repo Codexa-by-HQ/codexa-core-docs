@@ -1,0 +1,67 @@
+---
+title: "Registry"
+description: "Named stores with an automatic key prefix per name, and one call to close everything."
+---
+
+`createStoreRegistry()` holds multiple named stores, each safely isolated even when two of them share the same Redis database.
+
+```ts
+import { createStoreRegistry } from '@codexa/core/store';
+
+const stores = createStoreRegistry();
+
+const sessions = await stores.register('auth:sessions', {
+  mode: 'redis',
+  redisClient: redis.getClient(),
+});
+const metadata = await stores.register('auth:metadata', {
+  mode: 'kv',
+  kvPath: './data/auth.db',
+});
+
+await stores.closeAll();
+```
+
+## Automatic key prefixing
+
+A registered store's keys are prefixed with `<name>:` unless you pass your own `keyPrefix`. Two stores registered as `auth:sessions` and `auth:metadata` on the same Redis database never collide, and `flushdb()` on one only clears that store's own keys, not the whole database.
+
+```ts
+const sessions = await stores.register('auth:sessions', { mode: 'redis', redisClient });
+await sessions.set('u1', data);
+// stored under the real key "auth:sessions:u1"
+```
+
+`createStore()` called directly, outside a registry, has no prefix by default. Opt into the same protection yourself with `keyPrefix` when a store is not going through a registry but still shares a Redis database with something else.
+
+```ts
+await createStore({ mode: 'redis', redisClient, keyPrefix: 'billing:' });
+```
+
+## Reading the registry back
+
+```ts
+stores.has('auth:sessions'); // boolean
+stores.names();              // readonly string[]
+stores.get('auth:sessions'); // throws if not registered
+```
+
+Registering the same name twice throws, `register` does not silently return the existing instance.
+
+## Closing
+
+```ts
+await stores.close('auth:sessions'); // one store, returns false if it was not registered
+await stores.closeAll();             // every store in the registry, in parallel
+```
+
+`closeAll` is the pattern to reach for in a single `app.onShutdown` hook, instead of manually closing every store your app created one at a time.
+
+```ts
+app.onShutdown(() => stores.closeAll());
+```
+
+<Cards>
+  <Card title="Overview" href="/docs/store/overview" description="The full store interface, and the silent Redis fallback to know about." />
+  <Card title="Legacy Store API" href="/docs/store/legacy-store-api" description="The original single default-store API, kept for backward compatibility." />
+</Cards>

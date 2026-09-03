@@ -1,0 +1,193 @@
+---
+title: "Generating Documents"
+description: "Turn route metadata into a real OpenAPI 3.1 document, with Zod schemas, versioned paths, and manually added routes."
+---
+
+`generateOpenApiDocument(source, config)` builds a full OpenAPI document from whatever `inspect()` reports. It does not import or construct the HTTP runtime class itself, it only reads the public `inspect()` shape, so it works against a real running app, and equally against a test double that only implements `inspect()`.
+
+```ts
+import { generateOpenApiDocument } from '@codexa/core/openapi';
+
+const document = generateOpenApiDocument(app, {
+  info: {
+    title: 'Catalog API',
+    version: '1.0.0',
+    description: 'Products, categories, and inventory.',
+  },
+  servers: [{ url: 'https://api.example.com' }],
+});
+```
+
+<Callout type="warn">
+  A route only appears in the document if it has `options.openapi` set. A route with no `openapi` metadata still serves real traffic, it is simply invisible to the generator. This is deliberate: the document only ever describes what you chose to document, not everything that happens to be registered.
+</Callout>
+
+## Documenting a route
+
+`openapi` accepts Zod schemas for `params`, `query`, `headers`, and `body`, converted to JSON Schema automatically.
+
+```ts
+import { zod } from '@codexa/core/providers/zod';
+
+scope.route({
+  method: 'POST',
+  path: '/catalog/products',
+  handler: createProduct,
+  options: {
+    name: 'catalog.products.create',
+    tags: ['catalog:create'],
+    openapi: {
+      summary: 'Create a product',
+      tags: ['Catalog'],
+      body: zod.object({
+        sku: zod.string(),
+        name: zod.string().min(1),
+        priceCents: zod.number().int().positive(),
+      }),
+      bodyContentType: 'application/json',
+      responses: {
+        201: { description: 'Product created' },
+        400: { description: 'Invalid payload' },
+      },
+    },
+  },
+});
+```
+
+`params`, `query`, and `headers` each become individual OpenAPI `parameters` entries, one per top-level field in the schema, not a single opaque object. `body` becomes the `requestBody`.
+
+```ts
+scope.route({
+  method: 'GET',
+  path: '/catalog/products/:id',
+  handler: getProduct,
+  options: {
+    name: 'catalog.products.show',
+    openapi: {
+      summary: 'Get a product',
+      params: zod.object({ id: zod.string() }),
+      query: zod.object({ include: zod.enum(['inventory']).optional() }),
+      responses: { 200: { description: 'Product returned' } },
+    },
+  },
+});
+```
+
+<Callout type="info">
+  A `:id` in the path is added as a required string path parameter automatically, even without a `params` schema. Declaring `params` explicitly only matters when you want a more specific type, a description, or a non-string format, an automatically-added path parameter is always a plain required string.
+</Callout>
+
+## Leaving a route out
+
+Two different fields exclude a route, from opposite directions.
+
+- **`openapi.exclude: true`** documents nothing for a route that still runs, useful for endpoints you deliberately do not want public in the spec, such as an internal health check.
+- **`options.enabled: false`** disables the route from actual traffic entirely. Since `generateOpenApiDocument` defaults `includeDisabled` to `false`, a disabled route is already left out of the document too, without needing to also set `exclude`.
+
+```ts
+scope.route({
+  method: 'GET',
+  path: '/internal/debug',
+  handler: debugHandler,
+  options: { openapi: { exclude: true, responses: { 200: { description: 'ok' } } } },
+});
+```
+
+## Routes that were not registered through Codexa
+
+`additionalRoutes` documents an endpoint that exists outside the framework entirely, served by different middleware, a proxy, or another process sharing the same base URL.
+
+```ts
+const document = generateOpenApiDocument(app, {
+  info: { title: 'Catalog API', version: '1.0.0' },
+  additionalRoutes: [
+    {
+      method: 'GET',
+      path: '/healthz',
+      name: 'infra.healthz',
+      openapi: {
+        summary: 'Infrastructure health check',
+        responses: { 200: { description: 'Service is up' } },
+      },
+    },
+  ],
+});
+```
+
+## Versioned routes
+
+A [versioned route](/docs/http/versioned-routes) gets its version header added to the document as a required parameter automatically, with an `enum` locking it to that exact version, and its path rendered according to `versionedPathStrategy`.
+
+```ts
+scope.version('2.0.0').route({
+  method: 'GET',
+  path: '/catalog/products/:id',
+  handler: getProductV2,
+  options: {
+    name: 'catalog.products.show.v2',
+    openapi: {
+      summary: 'Get a product (v2, includes inventory by default)',
+      params: zod.object({ id: zod.string() }),
+      responses: { 200: { description: 'Product returned' } },
+    },
+  },
+});
+```
+
+```ts
+generateOpenApiDocument(app, {
+  info: { title: 'Catalog API', version: '1.0.0' },
+  versionedPathStrategy: 'suffix', // default
+});
+```
+
+With `'suffix'` (the default), the path becomes `/catalog/products/{id};version=2.0.0`, distinct from the unversioned path, so both appear as separate operations in the document. With `'same-path'`, every version of a route collapses onto the identical OpenAPI path.
+
+<Callout type="warn">
+  Two versions of the same route sharing one OpenAPI path is one operation slot, not two. With `versionedPathStrategy: 'same-path'`, generating a document from a route with more than one version produces a warning, `Duplicate OpenAPI operation ...`, and only the first version registered ends up in the document. Use `'suffix'`, the default, unless you specifically want every version folded into a single documented path.
+</Callout>
+
+## Security schemes
+
+```ts
+const document = generateOpenApiDocument(app, {
+  info: { title: 'Catalog API', version: '1.0.0' },
+  securitySchemes: {
+    bearer: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+  },
+  security: [{ bearer: [] }],
+});
+```
+
+`security` set here applies as the document-wide default. A route can still override it per-operation through `openapi.security` in its own route options.
+
+## Tags, prefixes, and where routes come from
+
+```ts
+generateOpenApiDocument(app, {
+  info: { title: 'Catalog API', version: '1.0.0' },
+  tags: [{ name: 'Catalog', description: 'Products and categories' }],
+  pathPrefix: '/api',              // every generated path is prefixed with /api
+  excludePluginRoutes: false,      // set true to document only routes registered outside any plugin
+  includeDisabled: false,          // default; set true to document disabled routes too
+});
+```
+
+A route without any `openapi.tags` falls back to its owning plugin's name as its tag, so a document generated with zero tag configuration still groups sensibly by plugin in tools like Swagger UI.
+
+## Writing the document to a file
+
+```ts
+const document = generateOpenApiDocument(app, {
+  info: { title: 'Catalog API', version: '1.0.0' },
+});
+
+await Deno.writeTextFile('openapi.json', JSON.stringify(document, null, 2));
+```
+
+Useful in CI, to diff the generated spec against a committed copy and catch an accidental breaking change to a route's shape before it ships.
+
+<Cards>
+  <Card title="Serving & Tooling" href="/docs/openapi/serving-and-tooling" description="Serve the document from a route, and load it into Swagger UI, Scalar, or Postman." />
+  <Card title="Versioned Routes" href="/docs/http/versioned-routes" description="How version() and versionHeader work at the HTTP layer." />
+</Cards>

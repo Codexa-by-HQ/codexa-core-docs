@@ -1,0 +1,63 @@
+---
+title: "WebSockets"
+description: "There is no dedicated WebSocket API. A route handler upgrades the connection itself, using the runtime's own upgrade function."
+---
+
+Codexa Core does not add a WebSocket abstraction on top of the Fetch API. A route handler is free to upgrade a connection itself, the same way it would in a plain `Deno.serve` handler with no framework involved.
+
+```ts
+import { definePlugin } from '@codexa/core/http';
+
+export const realtimePlugin = definePlugin({
+  name: 'realtime',
+  setup(scope) {
+    scope.route({
+      method: 'GET',
+      path: '/realtime/ws',
+      handler: (ctx) => {
+        const upgrade = ctx.headers.get('upgrade')?.toLowerCase();
+        if (upgrade !== 'websocket') {
+          return ctx.json(
+            { error: 'Expected WebSocket upgrade' },
+            { status: 426, headers: { upgrade: 'websocket' } },
+          );
+        }
+
+        const { socket, response } = Deno.upgradeWebSocket(ctx.request);
+
+        socket.onopen = () => socket.send('connected');
+        socket.onmessage = (event) => socket.send(`echo:${event.data}`);
+
+        return response;
+      },
+      options: { name: 'realtime.ws', tags: ['realtime'] },
+    });
+  },
+});
+```
+
+The handler checks for an `Upgrade: websocket` header, calls `Deno.upgradeWebSocket(ctx.request)`, wires up the returned `socket`, and returns the `response` half of that pair like any other route handler would return a `Response`. `426 Upgrade Required` is the correct status for a request that reached this route without asking for a WebSocket upgrade, such as a plain browser `GET`.
+
+## Testing it
+
+A browser `fetch` or a plain `GET` request cannot open a WebSocket. Use a WebSocket client.
+
+```ts
+const socket = new WebSocket('ws://localhost:8000/realtime/ws');
+socket.onmessage = (event) => console.log(event.data);
+```
+
+## Runtime differences
+
+`Deno.upgradeWebSocket` is Deno specific, since a WebSocket upgrade is not part of the Fetch API standard that `app.dispatch` otherwise relies on. Each runtime exposes its own mechanism instead:
+
+- **Deno**: `Deno.upgradeWebSocket(ctx.request)`, as shown above.
+- **Bun**: `Bun.serve`'s dedicated `websocket` handlers.
+- **Cloudflare Workers**: the `WebSocketPair` API.
+
+A route written this way stays portable in every other sense, it is still a plugin, a route, and a handler, but the upgrade call itself needs to change per runtime if you deploy the same app to more than one.
+
+<Cards>
+  <Card title="Response Helpers" href="/docs/http/response-helpers" description="Every other way a handler can build a Response." />
+  <Card title="Dispatch & Lifecycle" href="/docs/http/dispatch-and-lifecycle" description="How dispatch matches a request to this route in the first place." />
+</Cards>

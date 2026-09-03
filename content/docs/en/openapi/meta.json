@@ -1,0 +1,5 @@
+{
+  "title": "OpenAPI",
+  "icon": "Braces",
+  "pages": ["generating-documents", "serving-and-tooling"]
+}

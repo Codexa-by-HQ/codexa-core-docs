@@ -1,0 +1,403 @@
+---
+title: "Overview"
+description: "One upload interface across local disk, S3, Cloudinary, and ImageKit, plus signed URLs for client-direct uploads."
+---
+
+import { TypeTable } from 'fumadocs-ui/components/type-table';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+`createStorageManager(config)` resolves the right provider adapter from `config.provider` automatically, so the rest of your code never branches on which provider is active.
+
+```ts
+import { buildStorageConfig } from '@codexa/core/config';
+import { createStorageManager } from '@codexa/core/storage';
+
+const storage = createStorageManager(
+  buildStorageConfig({
+    STORAGE_PROVIDER: 'local',
+    LOCAL_STORAGE_DIR: './uploads',
+    LOCAL_BASE_URL: 'http://localhost:8000/uploads',
+  }),
+);
+
+const uploaded = await storage.upload(fileBytes, {
+  folder: 'avatars',
+  contentType: 'image/png',
+  assetType: 'image',
+});
+```
+
+`config` comes from [`buildStorageConfig`](/docs/configuration/storage-config), which turns environment variables into the typed config each provider needs.
+
+## Uploading
+
+```ts
+// One file
+const result = await storage.upload(fileBytes, {
+  folder: 'avatars',
+  contentType: 'image/jpeg',
+  assetType: 'image',
+});
+
+// Several files at once, uploaded concurrently
+const [image, video] = await storage.upload(
+  [imageBytes, videoBytes],
+  [
+    { folder: 'images', assetType: 'image', contentType: 'image/webp' },
+    { folder: 'videos', assetType: 'video', contentType: 'video/mp4' },
+  ],
+) as UploadResult[];
+```
+
+`file` accepts raw bytes, a `ReadableStream`, or an array of either. A single `options` object applies to every file in an array upload, or pass a parallel array for per-file metadata. The `as UploadResult[]` cast above exists because `upload`'s return type is a union of one result or many, TypeScript cannot narrow that automatically from an array argument, so an array upload needs the cast to get array methods back.
+
+### Upload options
+
+Every field beyond `folder` and `contentType` is optional, and support varies by provider, an unsupported field is simply ignored rather than rejected.
+
+<TypeTable
+  type={{
+    folder: { type: 'string', description: 'Destination folder or key prefix.' },
+    fileName: { type: 'string', description: 'Desired file name. Providers may still rename it.' },
+    contentType: { type: 'string', description: 'The MIME type of the file.' },
+    assetType: { type: "'image' | 'video' | 'document' | 'raw'", description: 'What kind of asset this is.' },
+    overwrite: { type: 'boolean', description: 'Replace an existing file at the same key instead of erroring.' },
+    isPublic: { type: 'boolean', default: 'true', description: 'Set false to store the file as private or authenticated-access only.' },
+    customId: { type: 'string', description: 'A stable identifier you choose, instead of a provider-generated one, such as Cloudinary\'s public_id.' },
+    tags: { type: 'readonly string[]', description: 'Provider-side tags for organizing or filtering assets later.' },
+    tenantId: { type: 'string', description: 'Scopes the upload for multi-tenant applications, where the provider supports it.' },
+    metadata: { type: 'Record<string, string>', description: 'Arbitrary key-value metadata attached to the asset.' },
+    eagerTransformations: { type: 'TransformationOptions[]', description: 'Transformations applied immediately after upload, instead of on first request.' },
+  }}
+/>
+
+### Upload result
+
+<TypeTable
+  type={{
+    key: { type: 'string', description: 'The identifier to pass back into delete, exists, and the URL helpers.' },
+    url: { type: 'string', description: 'The public delivery URL for the uploaded asset.' },
+    size: { type: 'number', description: 'File size in bytes.' },
+    contentType: { type: 'string', description: 'The stored MIME type.' },
+    assetType: { type: "'image' | 'video' | 'document' | 'raw'", description: '' },
+    publicId: { type: 'string', description: 'The provider\'s own stable identifier, present on Cloudinary and ImageKit. See the callout below.' },
+    format: { type: 'string', description: 'File extension or format, when the provider reports one.' },
+    width: { type: 'number', description: 'Image or video width in pixels, when known.' },
+    height: { type: 'number', description: 'Image or video height in pixels, when known.' },
+    duration: { type: 'number', description: 'Video duration in seconds.' },
+    bitrate: { type: 'number', description: 'Video bit rate in bits per second.' },
+    frameRate: { type: 'number', description: 'Video frame rate.' },
+  }}
+/>
+
+## Deleting and checking
+
+```ts
+await storage.delete(result.key);
+await storage.exists(result.key); // boolean, or undefined if the provider does not support it
+```
+
+<Callout type="info">
+  What "key" means depends on the provider: **S3** and **local** use the relative object or file path. **Cloudinary** uses its `public_id`. **ImageKit** uses its `fileId`, returned as `result.publicId` rather than `result.key`. Always delete using the same identifier `upload` returned, not a path you construct yourself.
+</Callout>
+
+## URLs
+
+```ts
+storage.getTransformedUrl(result.key, { width: 200, height: 200, crop: 'fill', format: 'webp' });
+await storage.getSignedUrl(result.key, 3600); // time-limited delivery URL
+```
+
+Both return `undefined` on a provider that does not support the operation, local storage has no transformation or signed-delivery-URL support, for example, rather than throwing. Check for `undefined` instead of wrapping every call in `try`/`catch`.
+
+## Client-direct uploads
+
+For large files, letting the browser upload straight to the provider avoids routing file bytes through your own server entirely. Your server only ever issues short-lived, scoped credentials, it never touches the file itself.
+
+<Callout type="info">
+  **Recommended default:** use plain `storage.upload()` for small files, avatars, documents, anything a few MB or under, where simplicity matters more than bandwidth. Reach for client-direct uploads once files get large, video especially, since it takes your server out of the transfer entirely, upload speed is limited only by the client's own connection, and you are not paying to receive bytes you are just going to re-send to the provider anyway.
+</Callout>
+
+```
+Client                   Your Server               Provider
+  |--- POST /upload-token ->|                          |
+  |<-- SignedUploadResult --|  (signs credentials)     |
+  |--- PUT / POST -------->|------------------------->|
+  |<-- 200 / asset URL ----|--------------------------|
+```
+
+The three parties involved, and what each one sends:
+
+<Steps>
+
+<Step>
+
+### The client asks your server for credentials
+
+Your server decides this request body's shape, the framework does not enforce one. A minimal, common one is the file's name, its content type, and where it should go:
+
+```tsx title="components/avatar-uploader.tsx"
+const res = await fetch('/media/upload-token', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    fileName: file.name,
+    contentType: file.type,
+    folder: 'avatars',
+  }),
+});
+
+const token = await res.json(); // SignedUploadResult
+```
+
+</Step>
+
+<Step>
+
+### Your server signs credentials and returns them
+
+Authenticate the request first, this endpoint is what actually authorizes an upload, `getSignedUploadUrl` itself has no idea who is calling it.
+
+```ts title="media-router.ts"
+import { createRouter } from '@codexa/core/http';
+
+const mediaRouter = createRouter('media-router').route({
+  method: 'POST',
+  path: '/media/upload-token',
+  handler: async (ctx) => {
+    const body = await ctx.request.json();
+
+    const token = await storage.getSignedUploadUrl({
+      folder: body.folder,
+      fileName: body.fileName,
+      contentType: body.contentType,
+      assetType: 'image',
+      expiresIn: 900,
+    });
+
+    return ctx.json(token);
+  },
+});
+```
+
+`getSignedUploadUrl` accepts the same metadata fields as `upload`, `fileName`, `customId`, `tags`, `overwrite`, `metadata`, `eagerTransformations`, plus `expiresIn` (seconds, default `3600`). `contentType` is the one required field, the provider needs to know what it is signing credentials for.
+
+What comes back is a `SignedUploadResult`, but its exact shape depends on which provider is configured. The `fields` a browser must submit differ per provider, S3 needs none at all:
+
+<Tabs items={['S3', 'Cloudinary', 'ImageKit']}>
+
+<Tab value="S3">
+
+```json
+{
+  "uploadUrl": "https://my-bucket.s3.amazonaws.com/avatars/a1b2c3.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&...",
+  "method": "PUT",
+  "key": "avatars/a1b2c3.png",
+  "expiresAt": 1755123456,
+  "publicUrl": "https://cdn.example.com/avatars/a1b2c3.png"
+}
+```
+
+No `fields`, the signature is baked into `uploadUrl` itself as query parameters.
+
+</Tab>
+
+<Tab value="Cloudinary">
+
+```json
+{
+  "uploadUrl": "https://api.cloudinary.com/v1_1/my-cloud/image/upload",
+  "method": "POST",
+  "fields": {
+    "api_key": "123456789012345",
+    "timestamp": "1755121656",
+    "signature": "9c4f2a1e7b3d6c8f0a2b4e6d8c1a3f5b7e9d0c2a",
+    "public_id": "a1b2c3d4"
+  },
+  "key": "avatars/a1b2c3d4",
+  "expiresAt": 1755123456,
+  "publicUrl": "https://res.cloudinary.com/my-cloud/image/upload/avatars/a1b2c3d4"
+}
+```
+
+</Tab>
+
+<Tab value="ImageKit">
+
+```json
+{
+  "uploadUrl": "https://upload.imagekit.io/api/v1/files/upload",
+  "method": "POST",
+  "fields": {
+    "publicKey": "public_abc123",
+    "signature": "f1e2d3c4b5a67c8d9e0f1a2b3c4d5e6f7a8b9c0d",
+    "expire": "1755123456",
+    "token": "8f14e45f-ceea-467e-b0d3",
+    "fileName": "a1b2c3d4.png",
+    "folder": "/avatars"
+  },
+  "key": "/avatars/a1b2c3d4.png",
+  "expiresAt": 1755123456,
+  "publicUrl": "https://ik.imagekit.io/my_id/avatars/a1b2c3d4.png"
+}
+```
+
+</Tab>
+
+</Tabs>
+
+Never sent to the client: your S3 secret key, Cloudinary API secret, or ImageKit private key. `fields` only ever contains derived, time-limited values, a signature computed from a secret, not the secret itself.
+
+<TypeTable
+  type={{
+    uploadUrl: { type: 'string', description: 'Where the client sends the file.' },
+    method: { type: "'PUT' | 'POST'", description: "PUT for S3's presigned URL, POST for Cloudinary and ImageKit's multipart form." },
+    fields: { type: 'Record<string, string>', description: 'Extra form fields the client must include. Omitted for S3.' },
+    key: { type: 'string', description: 'The key the file will have once uploaded, known upfront, before the client uploads anything.' },
+    expiresAt: { type: 'number', description: 'Unix timestamp, in seconds, when these credentials stop working.' },
+    publicUrl: { type: 'string', description: 'Where the asset will be reachable once uploaded, only present when isPublic was not set to false.' },
+  }}
+/>
+
+</Step>
+
+<Step>
+
+### The client uploads straight to the provider
+
+Branch on `token.method` rather than hardcoding which provider is configured, this same code works no matter which of the three is active:
+
+```tsx title="components/avatar-uploader.tsx"
+if (token.method === 'PUT') {
+  // S3: the raw file as the body, no FormData
+  await fetch(token.uploadUrl, {
+    method: 'PUT',
+    headers: { 'content-type': file.type },
+    body: file,
+  });
+} else {
+  // Cloudinary or ImageKit: a multipart form, provider fields plus the file
+  const form = new FormData();
+  Object.entries(token.fields).forEach(([key, value]) => {
+    form.append(key, value as string);
+  });
+  form.append('file', file);
+
+  await fetch(token.uploadUrl, { method: 'POST', body: form });
+}
+```
+
+</Step>
+
+<Step>
+
+### Your server records that the upload happened
+
+The provider never calls your server back on its own, so if your app needs to know the upload succeeded, save a user's new avatar `key` to their profile, for example, the client tells your server once the direct upload resolves. `token.key` is already known from step 2, no need to re-derive it:
+
+```tsx title="components/avatar-uploader.tsx"
+await fetch('/media/confirm', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ key: token.key }),
+});
+```
+
+```ts title="media-router.ts"
+.route({
+  method: 'POST',
+  path: '/media/confirm',
+  handler: async (ctx) => {
+    const { key } = await ctx.request.json();
+    // e.g. await db.users.update(userId, { avatarKey: key });
+    return ctx.json({ ok: true });
+  },
+})
+```
+
+</Step>
+
+</Steps>
+
+### Full client component
+
+Putting all three client-side steps together, a minimal React uploader:
+
+```tsx title="components/avatar-uploader.tsx"
+'use client';
+
+import { useState } from 'react';
+
+export function AvatarUploader() {
+  const [uploading, setUploading] = useState(false);
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+
+    const token = await fetch('/media/upload-token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        fileName: file.name,
+        contentType: file.type,
+        folder: 'avatars',
+      }),
+    }).then((res) => res.json());
+
+    if (token.method === 'PUT') {
+      await fetch(token.uploadUrl, {
+        method: 'PUT',
+        headers: { 'content-type': file.type },
+        body: file,
+      });
+    } else {
+      const form = new FormData();
+      Object.entries(token.fields).forEach(([key, value]) => {
+        form.append(key, value as string);
+      });
+      form.append('file', file);
+      await fetch(token.uploadUrl, { method: 'POST', body: form });
+    }
+
+    await fetch('/media/confirm', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: token.key }),
+    });
+
+    setUploading(false);
+  }
+
+  return (
+    <input
+      type="file"
+      accept="image/*"
+      onChange={handleFileChange}
+      disabled={uploading}
+    />
+  );
+}
+```
+
+| Provider | Method | Client body |
+| --- | --- | --- |
+| S3 | `PUT` | Raw binary |
+| Cloudinary | `POST` | `FormData` with a `file` field, plus signed params |
+| ImageKit | `POST` | `FormData` with a `file` field, plus auth fields |
+| Local | Throws | Not supported, use `storage.upload()` directly instead |
+
+## Introspection and the escape hatch
+
+```ts
+storage.providerType; // 'local' | 's3' | 'cloudinary' | 'imagekit'
+storage.config;       // the full StorageConfig used to create this manager
+storage.adapter;      // the raw provider instance, for provider-specific calls not wrapped by StorageManager
+```
+
+<Cards>
+  <Card title="Registry" href="/docs/storage/registry" description="Named storage managers, such as one for avatars and one for invoices." />
+  <Card title="Providers Reference" href="/docs/storage/providers-reference" description="Every environment variable each provider accepts." />
+</Cards>

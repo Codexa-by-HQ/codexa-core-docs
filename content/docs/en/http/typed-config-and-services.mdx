@@ -1,0 +1,103 @@
+---
+title: "Typed Config & Services"
+description: "Give a plugin a typed install config, and expose typed services that only its declared dependents can read."
+---
+
+Two module augmentation interfaces make a plugin's config and exposed services visible to TypeScript across your whole project: `IPluginConfigMap` and `IPluginServiceMap`. Both live in `@codexa/core/http`, and both are keyed by plugin name.
+
+```ts
+declare module '@codexa/core/http' {
+  interface IPluginConfigMap {
+    auth: { issuer: string };
+  }
+
+  interface IPluginServiceMap {
+    auth: {
+      verifyToken(token: string): Promise<{ userId: string } | null>;
+    };
+  }
+}
+```
+
+Once declared, `install(authPlugin, config)` requires a config matching `{ issuer: string }`, and `setup(scope, config)` receives it typed the same way, with no manual generic arguments anywhere.
+
+## Exposing a service
+
+Inside `setup`, call `scope.exposeService(name, implementation)`. The implementation must match the shape declared for that service name in `IPluginServiceMap`.
+
+```ts
+import { definePlugin } from '@codexa/core/http';
+
+export const authPlugin = definePlugin({
+  name: 'auth',
+  setup(scope, config) {
+    scope.exposeService('verifyToken', async (token) => {
+      if (token === '') return null;
+      return { userId: `${config.issuer}:${token}` };
+    });
+  },
+});
+```
+
+## Reading a service from another plugin
+
+A plugin can only read services from a plugin it declares in `dependsOn`. This is checked at the type level, `getService` only accepts a plugin name that appears in `dependsOn`, and at runtime, calling it for an undeclared dependency throws.
+
+```ts
+export const profilePlugin = definePlugin({
+  name: 'profile',
+  dependsOn: ['auth'] as const,
+  setup(scope) {
+    const verifyToken = scope.getService('auth', 'verifyToken');
+
+    scope.route({
+      method: 'GET',
+      path: '/me',
+      handler: async (ctx) => {
+        const token = ctx.headers.get('authorization')?.replace('Bearer ', '') ?? '';
+        const session = await verifyToken(token);
+        if (!session) {
+          return ctx.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+        return ctx.json(session);
+      },
+      options: { name: 'profile.me', tags: ['guarded:profile'] },
+    });
+  },
+});
+```
+
+`getServices('auth')` returns every service `auth` has exposed, typed as the full `IPluginServiceMap['auth']` shape, useful when a plugin depends on several services from the same dependency.
+
+## Checking without throwing
+
+A few methods let a plugin check availability before committing to a call.
+
+```ts
+scope.hasDependency('auth');        // declared in dependsOn, and currently installed
+scope.hasPlugin('auth');            // installed, regardless of dependsOn
+scope.hasService('auth', 'verifyToken'); // declared as a dependency, and the service exists
+scope.getDependencyNames();         // every name listed in this plugin's dependsOn
+```
+
+## Reading services from the app itself
+
+After installation, the root app can also read a plugin's exposed services, without any `dependsOn` restriction, since the app is not a plugin.
+
+```ts
+const app = createApp()
+  .install(authPlugin, { issuer: 'codexa' })
+  .install(profilePlugin);
+
+const authServices = app.getServices('auth');
+const verifyToken = app.getService('auth', 'verifyToken');
+```
+
+<Callout type="info">
+  `dependsOn` only controls service access. It does not give a plugin access to another plugin's routes, middleware, or internal state. The only way to share behavior across plugins is through explicitly exposed services.
+</Callout>
+
+<Cards>
+  <Card title="Plugins" href="/docs/http/plugins" description="The full plugin shape, and install order rules." />
+  <Card title="Resource Composition" href="/docs/http/resource-composition" description="Passing shared resources, like a database client, into a plugin through its config." />
+</Cards>

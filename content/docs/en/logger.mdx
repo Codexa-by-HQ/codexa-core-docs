@@ -1,0 +1,89 @@
+---
+title: "Logger"
+description: "createLogger, log levels, structured data, and forwarding entries to your own destination."
+icon: "ScrollText"
+---
+
+`createLogger(module)` returns a logger scoped to a name, shown in every line it writes, so a log line's source is obvious without adding it to every message by hand.
+
+```ts
+import { createLogger } from '@codexa/core/logger';
+
+const log = createLogger('Api');
+
+log.info('server started', { port: 8000 });
+log.error('request failed', { requestId: 'r1', status: 500 });
+```
+
+## Levels
+
+```ts
+log.debug('cache miss', { key: 'u1' });
+log.info('user created', { id: 'u1' });
+log.warn('slow query', { ms: 820 });
+log.error('unhandled exception', error);
+log.fatal('database unreachable, exiting');
+```
+
+Levels are ordered `debug < info < warn < error < fatal`. Set `level` to only show entries at or above it, everything below the threshold is skipped entirely, not just hidden.
+
+```ts
+const log = createLogger('Api', { level: 'info' }); // debug lines are dropped
+```
+
+## Structured data
+
+Any arguments after the message become the entry's `data`. Passing exactly one argument keeps it as-is, more than one becomes an array, both are serialized alongside the message rather than string-concatenated into it.
+
+```ts
+log.info('order placed', { orderId: 'o_1', total: 42 });
+log.info('batch processed', { count: 10 }, { durationMs: 340 });
+```
+
+An `Error` passed as data is serialized into `{ name, message, stack, cause }` automatically, including a serialized `cause` if the error has one, so `log.error('failed', error)` captures the full error, not just its message string.
+
+## Development versus production formatting
+
+```ts
+createLogger('Api');                              // colorized, human-readable, the default
+createLogger('Api', { production: true });         // one-line JSON per entry
+```
+
+```
+2026-03-05 14:22:01.104 INFO  [Api] server started { "port": 8000 }
+```
+
+```json
+{"timestamp":"2026-03-05T14:22:01.104Z","level":"info","module":"Api","message":"server started","data":{"port":8000}}
+```
+
+Set `production: true` where structured JSON logs matter more than readability, most log aggregation services parse JSON lines directly rather than the colorized development format.
+
+## Child loggers
+
+```ts
+const log = createLogger('Api');
+const authLog = log.child('auth'); // module becomes "Api:auth"
+```
+
+A child logger inherits its parent's level, production mode, and writer, so switching an app to `production: true` in one place still applies to every child logger created from it.
+
+## Forwarding entries elsewhere
+
+```ts
+const log = createLogger('Api', {
+  writer: async (entry) => {
+    await fetch('https://logs.example.com/ingest', {
+      method: 'POST',
+      body: JSON.stringify(entry),
+    });
+  },
+});
+```
+
+`writer` receives every entry that passes the level filter, in addition to the normal console output, not instead of it. A writer that throws, or whose returned Promise rejects, is caught and logged on its own, it never breaks the log call that triggered it. This is the extension point for forwarding logs to a file, a database, or a service like Cloudflare Analytics Engine, runtime-neutral since it is just a function you provide.
+
+<Cards>
+  <Card title="Environment Variables" href="/docs/configuration/environment-variables" description="loadEnv() logs which .env files it found through this same logger." />
+  <Card title="Dispatch & Lifecycle" href="/docs/http/dispatch-and-lifecycle" description="Where an unhandled request error gets logged automatically." />
+</Cards>

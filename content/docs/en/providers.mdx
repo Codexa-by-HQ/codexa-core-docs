@@ -1,0 +1,57 @@
+---
+title: "Providers"
+description: "Every third-party package Codexa Core depends on, re-exported so a project never installs or maps them separately."
+icon: "Puzzle"
+---
+
+Codexa Core's own modules are built on a handful of well-established third-party packages. Rather than making a project install and configure each one itself, every dependency is re-exported through `@codexa/core/providers`, so importing from `@codexa/core` is enough.
+
+```ts
+import { MongoClient } from '@codexa/core/providers/mongodb';
+import { zod } from '@codexa/core/providers/zod';
+import Redis from '@codexa/core/providers/ioredis';
+```
+
+## Two ways to import a provider
+
+**A dedicated subpath**, `@codexa/core/providers/<name>`, gives the full package surface directly, exactly as if you had installed it yourself.
+
+```ts
+import { zod } from '@codexa/core/providers/zod';
+import { createRouter } from '@codexa/core/providers/rou3';
+```
+
+**The `providers` namespace subpath** gives every provider as a named export instead, useful when you want several of them from one import line.
+
+```ts
+import { zod, mongodb, ioredis } from '@codexa/core/providers';
+
+const client = new mongodb.MongoClient(uri);
+```
+
+Reach for the dedicated subpath in most code, it is what every example on this site uses. The namespace form mainly helps when writing a small script that touches several providers at once.
+
+## What is re-exported
+
+| Subpath | Package | Notes |
+| --- | --- | --- |
+| `@codexa/core/providers/path` | `@std/path` | |
+| `@codexa/core/providers/zod` | `@zod/zod` | Also exports `zod` as an alias for Zod's `z` namespace, and `ZodInfer`, `ZodInput`, `ZodOutput`, `AnyZodObject` type helpers |
+| `@codexa/core/providers/dotenv` | `@std/dotenv` | Backs [`loadEnv`](/docs/configuration/environment-variables)'s `.env` file loading |
+| `@codexa/core/providers/ioredis` | `ioredis` | The client type behind [`createRedisConnection`](/docs/configuration/redis) |
+| `@codexa/core/providers/mongodb` | `mongodb` | Includes `ObjectId`, see [Database (MongoDB)](/docs/configuration/database) |
+| `@codexa/core/providers/qs` | `qs` | Backs [`parseQueryParams`](/docs/utilities/query-parser) |
+| `@codexa/core/providers/rou3` | `rou3` | The radix tree router the [HTTP layer](/docs/http/overview) matches routes with internally |
+| `@codexa/core/providers/ua-parser-js` | `ua-parser-js` | Backs [`parseDevice`](/docs/utilities/device-parsing) |
+| `@codexa/core/providers/noble-hashes` | `@noble/hashes` | Backs [`blake2bDigest`](/docs/utilities/crypto-and-passwords), exported as several submodule namespaces since the package has no single root module |
+
+`@codexa/core/zod` also exists as a shorter compatibility alias for `@codexa/core/providers/zod`. New code should prefer the full `providers/zod` path.
+
+## Why this exists
+
+Two problems this avoids: a version of `mongodb` in your `deno.json` drifting out of sync with the one Codexa Core itself was built and tested against, and having to separately install and pin every dependency Codexa Core already needs internally, just to get its types.
+
+<Cards>
+  <Card title="Environment Variables" href="/docs/configuration/environment-variables" description="zod is what gives loadEnv() its typed, validated config." />
+  <Card title="Database (MongoDB)" href="/docs/configuration/database" description="ObjectId and the rest of the mongodb driver, re-exported here." />
+</Cards>

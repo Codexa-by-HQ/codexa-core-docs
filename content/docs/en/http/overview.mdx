@@ -1,0 +1,103 @@
+---
+title: "Overview"
+description: "How a Codexa Core application is created, started, and stopped, and the rules that govern plugin installation."
+---
+
+import {
+  Activity,
+  Boxes,
+  Braces,
+  Folder,
+  GitBranch,
+  Globe,
+  Puzzle,
+  Radio,
+  Route,
+  Shield,
+  ToggleLeft,
+  Waypoints,
+} from 'lucide-react';
+
+An application starts with `createApp`, which returns an object you install plugins into. Nothing runs until the app is booted, either explicitly or on its first request.
+
+## What the HTTP module gives you
+
+<Cards>
+  <Card icon={<Puzzle />} title="Plugin-first" href="/docs/http/plugins" description="Every capability, routes, middleware, services, is a plugin with its own ownership boundary." />
+  <Card icon={<Waypoints />} title="Typed config & services" href="/docs/http/typed-config-and-services" description="Module augmentation gives a plugin's install config and exposed services full autocomplete." />
+  <Card icon={<Shield />} title="Provide and expose middleware" href="/docs/http/middleware" description="Plugin-scoped middleware selected by tag patterns, and route-inline middleware, both built on the same provide/expose split." />
+  <Card icon={<GitBranch />} title="Versioned routes" href="/docs/http/versioned-routes" description="Header-selected route versions, with a strict fallback rule instead of a silent guess." />
+  <Card icon={<ToggleLeft />} title="Runtime route control" href="/docs/http/inspection-and-tags" description="inspect() the live route table, and enableByTags/disableByTags routes after boot, no redeploy needed." />
+  <Card icon={<Braces />} title="OpenAPI generation" href="/docs/openapi/generating-documents" description="A real OpenAPI 3.1 document generated from route metadata, with Zod schemas converted automatically." />
+  <Card icon={<Folder />} title="Static file serving" href="/docs/http/static-files" description="Serve a built frontend, including single-page app navigation fallback, from one route handler." />
+  <Card icon={<Radio />} title="WebSockets" href="/docs/http/websockets" description="Upgrade a connection inside a normal route handler, no separate WebSocket layer to learn." />
+  <Card icon={<Globe />} title="Adapter-friendly dispatch" href="/docs/http/dispatch-and-lifecycle" description="app.dispatch is a plain Request to Response function, unchanged across Deno, Bun, and Cloudflare Workers." />
+  <Card icon={<Boxes />} title="Resource composition" href="/docs/http/resource-composition" description="Shared resources flow in through install config, with an explicit rule for who closes what." />
+  <Card icon={<Activity />} title="Hooks" href="/docs/http/hooks" description="Observe every request after it finishes, without ever touching the native Response body." />
+  <Card icon={<Route />} title="Routers" href="/docs/http/routers" description="Reusable route collections, written once and mounted into one or more plugins." />
+</Cards>
+
+```ts
+import { createApp } from '@codexa/core/http';
+
+const app = createApp('orders-api');
+```
+
+The name passed to `createApp` is optional. Use it to tell multiple apps apart in logs, in a process that runs more than one.
+
+## Installing plugins
+
+`install` accepts a plugin and, if the plugin declares a config type, a matching config value as the second argument.
+
+```ts
+import { ordersPlugin } from './plugins/orders.ts';
+import { paymentsPlugin } from './plugins/payments.ts';
+
+const app = createApp('orders-api')
+  .install(ordersPlugin)
+  .install(paymentsPlugin, { provider: 'stripe' });
+```
+
+`install` enforces a handful of rules around naming, install order, and `dependsOn`, all checked immediately rather than deferred to boot time, covered in full on the [Plugins](/docs/http/plugins#installing-more-than-one-plugin) page. The short version: a plugin name is unique, dependencies must already be installed before the plugin that needs them, and `setup(scope, config)` must run synchronously, never `async`.
+
+## Starting and stopping
+
+```ts
+await app.boot();
+
+Deno.serve(app.dispatch);
+
+// later, during shutdown
+await app.shutdown();
+await app.whenStopped();
+```
+
+- `boot()` runs any async setup you passed it, compiles the route table, and moves the app into the `ready` phase. Calling it more than once is safe, since it returns the same result every time.
+- `dispatch` is the request handler. It boots the app automatically on its first call if nothing has booted it yet.
+- `shutdown()` runs every registered shutdown hook and stops the app from accepting new work.
+- `whenStopped()` resolves once shutdown has fully finished. Use it when something other than your own code triggers `shutdown()`, such as a process signal handler, and your entry point needs to wait for cleanup before the process exits.
+
+The full request handling path, including how a route is matched and how hooks fire around it, is covered in [Dispatch & Lifecycle](/docs/http/dispatch-and-lifecycle).
+
+## Reading the app back
+
+A handful of read only methods let you check what is installed, without touching the request path.
+
+```ts
+app.hasPlugin('orders');
+app.hasService('orders', 'createOrder');
+app.installedPlugins();
+app.getPhase();
+app.size;
+```
+
+`getPhase()` returns one of `idle`, `booting`, `ready`, `shutting_down`, or `stopped`, useful for guarding an async installer function against running after shutdown has already started. `size` returns the number of routes currently registered.
+
+## What else an app exposes
+
+Beyond `install`, `boot`, `dispatch`, and `shutdown`, the app carries the same [response helpers](/docs/http/response-helpers) available on `ctx`, service access through [`getService` and `getServices`](/docs/http/typed-config-and-services), tag based [inspection](/docs/http/inspection-and-tags), and app level [hooks](/docs/http/hooks).
+
+<Cards>
+  <Card title="Plugins" href="/docs/http/plugins" description="What a plugin owns, and how setup(scope, config) works." />
+  <Card title="Dispatch & Lifecycle" href="/docs/http/dispatch-and-lifecycle" description="How a request is matched, executed, and turned into a response." />
+</Cards>

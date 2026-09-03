@@ -1,0 +1,181 @@
+---
+title: "Database (MongoDB)"
+description: "Connect to MongoDB with connection pooling, automatic topology detection, and optional required transaction support."
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+`createMongoDatabase(uri, options?)` builds a managed MongoDB connection. Nothing is contacted until you call `.connect()`.
+
+```ts
+import { createMongoDatabase } from '@codexa/core/config';
+
+const mongo = createMongoDatabase('mongodb://localhost:27017/myapp');
+
+const db = await mongo.connect();
+const users = db.collection('users');
+```
+
+## Naming the database
+
+The database name can come from the URI, from `options.databaseName`, or both, as long as they agree.
+
+```ts
+// From the URI
+createMongoDatabase('mongodb://localhost:27017/myapp');
+
+// From options, when the URI has none
+createMongoDatabase('mongodb://localhost:27017', {
+  databaseName: 'myapp',
+});
+```
+
+<Callout type="warn">
+  Providing both, with different names, throws immediately, before any network call: `MongoDB database name conflict: the URI specifies "a", while options.databaseName specifies "b". Provide the database name only once.` Providing neither also throws. This is checked at connection setup, not buried in a runtime query failure later.
+</Callout>
+
+## Connection options
+
+`options` extends the MongoDB driver's own `MongoClientOptions` directly, so any driver option, `replicaSet`, `retryWrites`, `authSource`, and so on, is passed straight through. There is no nested `clientOptions` object to remember.
+
+```ts
+const mongo = createMongoDatabase(
+  'mongodb://host1:27017,host2:27017/myapp',
+  {
+    replicaSet: 'rs0',
+    minPoolSize: 5,
+    maxPoolSize: 20,
+    serverSelectionTimeoutMS: 10_000,
+  },
+);
+```
+
+Four defaults are applied when you do not set them yourself, and any value you do pass overrides its default directly.
+
+| Option | Default |
+| --- | --- |
+| `minPoolSize` | `5` |
+| `maxPoolSize` | `20` |
+| `serverSelectionTimeoutMS` | `10000` |
+| `socketTimeoutMS` | `45000` |
+
+## What connect() actually does
+
+`connect()` does more than open a socket.
+
+<Steps>
+
+<Step>
+
+### The client connects
+
+A `MongoClient` is created from your URI and options, and opens its connection pool.
+
+</Step>
+
+<Step>
+
+### The database is pinged
+
+A `ping` command confirms the target database is actually reachable, not just that a TCP connection succeeded.
+
+</Step>
+
+<Step>
+
+### Capabilities are detected
+
+MongoDB's `hello` command classifies the deployment's topology and transaction support, covered in detail below.
+
+</Step>
+
+<Step>
+
+### The connection is marked ready
+
+Only after every prior step succeeds does `connect()` resolve. If any step fails, the partially created client is closed automatically and the error is re-thrown, so a failed connection never leaks a half-open client.
+
+</Step>
+
+</Steps>
+
+```ts
+const db = await mongo.connect(); // resolves only after ping and capability checks succeed
+```
+
+`connect()` is safe to call more than once. A second call while already connected returns the existing database immediately, and concurrent calls made while a connection is still in progress all share the same in-flight promise rather than opening multiple clients.
+
+## Detecting topology and transaction support
+
+After connecting, Codexa Core runs MongoDB's own `hello` command to classify the deployment, rather than relying on driver-internal properties that can change between versions.
+
+```ts
+mongo.getCapabilities();
+// {
+//   topology: 'replica-set',
+//   replicaSetName: 'rs0',
+//   isReplicaSet: true,
+//   isSharded: false,
+//   isLoadBalanced: false,
+//   supportsSessions: true,
+//   supportsTransactions: true,
+//   maxWireVersion: 21,
+// }
+
+mongo.supportsTransactions(); // boolean, shorthand for getCapabilities().supportsTransactions
+mongo.isReplicaSet();         // boolean
+mongo.isSharded();            // boolean
+mongo.isLoadBalanced();       // boolean
+```
+
+Transaction support follows MongoDB's actual version requirements, not a guess: a replica set needs wire version 7 or higher (MongoDB 4.0+), a sharded or load-balanced cluster needs wire version 8 or higher (MongoDB 4.2+), and logical sessions must be supported either way. A standalone server never supports transactions, regardless of version.
+
+## Requiring transactions
+
+Pass `requireTransactions: true` when your application logic depends on multi-document transactions, such as writing to two collections atomically. `connect()` then throws immediately if the deployment cannot support them, instead of letting the first `session.withTransaction()` call fail deep inside a request.
+
+```ts
+const mongo = createMongoDatabase(uri, {
+  replicaSet: 'rs0',
+  requireTransactions: true,
+});
+
+await mongo.connect();
+// Throws here, not later, if the deployment turns out to be standalone:
+// 'MongoDB deployment topology "standalone" does not support multi-document transactions.'
+```
+
+Without `requireTransactions`, connecting to a deployment that cannot run transactions still succeeds, Codexa Core just logs a warning so it is visible in your logs rather than silent.
+
+## Disconnecting
+
+```ts
+await mongo.disconnect();
+```
+
+Calling `disconnect()` while a connection attempt is still in progress waits for that attempt to settle first, so a connect-then-immediately-disconnect sequence during a fast shutdown does not leave a client half-initialized.
+
+## Reading the connection back
+
+```ts
+mongo.isConnected();      // boolean
+mongo.getDatabaseName();  // string, always available, even before connecting
+mongo.getDb();            // Db, throws if not connected
+mongo.getClient();        // MongoClient, throws if not connected
+```
+
+## ObjectId and the rest of the MongoDB driver
+
+The full `mongodb` package, including `ObjectId`, is re-exported from `@codexa/core/providers/mongodb`, so a project does not need to add `mongodb` as a separate dependency just to construct an id or use a driver type.
+
+```ts
+import { ObjectId } from '@codexa/core/providers/mongodb';
+
+const users = db.collection('users');
+const user = await users.findOne({ _id: new ObjectId(id) });
+```
+
+<Cards>
+  <Card title="Redis" href="/docs/configuration/redis" description="The same connect-lazily, connect-once pattern for Redis." />
+  <Card title="Resource Composition" href="/docs/http/resource-composition" description="Pass a connected database into a plugin's install config." />
+</Cards>

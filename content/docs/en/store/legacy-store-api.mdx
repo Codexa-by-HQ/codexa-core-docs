@@ -1,0 +1,57 @@
+---
+title: "Legacy Store API"
+description: "The original single default-store API: initializeStore and the store singleton, kept for backward compatibility."
+---
+
+Before `createStore` and `createStoreRegistry` existed, Codexa Core shipped one application-wide store. That API still works, and still gets maintenance, but new code should prefer [`createStore`](/docs/store/overview) for a plugin-owned instance, or [`createStoreRegistry`](/docs/store/registry) for several named ones.
+
+```ts
+import { initializeStore, store } from '@codexa/core/store';
+
+await initializeStore({ mode: 'memory' });
+await store.set('key', 'value');
+const value = await store.get('key');
+```
+
+## One important difference from createStore
+
+`initializeStore` defaults `closeRedisClientOnClose` to `true`. `createStore` defaults it to `false`. If you inject a Redis client through `initializeStore`, closing the default store also disconnects that client, closing a store built with `createStore` does not. Pass `closeRedisClientOnClose: false` explicitly to `initializeStore` if the Redis client is shared with anything else.
+
+```ts
+await initializeStore({
+  mode: 'redis',
+  redisClient: redis.getClient(),
+  closeRedisClientOnClose: false, // the client is shared, do not close it here
+});
+```
+
+## initializeStore is idempotent
+
+```ts
+await initializeStore({ mode: 'memory' }); // creates the store
+await initializeStore({ mode: 'redis', redisClient }); // no-op, returns the same memory store
+```
+
+The second call is silently ignored once a default store already exists, even with completely different config. `initializeStore` is meant to be called exactly once, typically at application startup.
+
+## Reading the default store
+
+```ts
+getStore();       // the StoreInstance, throws if not initialized
+getStoreType();   // 'memory' | 'redis' | 'kv'
+isStoreReady();   // boolean, safe to call before initializing
+getStoreStats();  // Promise<StoreStats>
+```
+
+## Closing
+
+```ts
+await closeStore();
+```
+
+Safe to call even if the store was never initialized, or if initialization is still in progress, it waits for that to settle first.
+
+<Cards>
+  <Card title="Overview" href="/docs/store/overview" description="createStore, the three backends, and the atomic operations." />
+  <Card title="Registry" href="/docs/store/registry" description="Named stores when one app-wide store is not enough." />
+</Cards>

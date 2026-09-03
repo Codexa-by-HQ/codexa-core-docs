@@ -1,0 +1,110 @@
+---
+title: "Installation"
+description: "Install Codexa Core from JSR for Deno, npm, pnpm, Yarn, or Bun."
+icon: "Download"
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Codexa Core is published on [JSR as `@codexa/core`](https://jsr.io/@codexa/core). JSR serves both Deno style and npm style package managers from one registry, so the same package installs cleanly across runtimes.
+
+## Requirements
+
+Codexa Core targets Deno as its primary runtime. Install the latest stable release of Deno before you continue.
+
+<Callout type="info">
+  Some parts of the framework, such as the Deno KV store mode and the local disk storage provider, use Deno specific APIs directly and only run on Deno. The HTTP layer itself does not, and is covered in [Introduction](/docs).
+</Callout>
+
+## Install
+
+<Tabs items={['Deno', 'npm', 'pnpm', 'Yarn', 'Bun']}>
+
+<Tab value="Deno">
+
+```bash
+deno add jsr:@codexa/core
+```
+
+Adds `@codexa/core` to the `imports` field of your project's `deno.json`.
+
+</Tab>
+
+<Tab value="npm">
+
+```bash
+npx jsr add @codexa/core
+```
+
+</Tab>
+
+<Tab value="pnpm">
+
+```bash
+pnpm dlx jsr add @codexa/core
+```
+
+</Tab>
+
+<Tab value="Yarn">
+
+```bash
+yarn dlx jsr add @codexa/core
+```
+
+</Tab>
+
+<Tab value="Bun">
+
+```bash
+bunx jsr add @codexa/core
+```
+
+</Tab>
+
+</Tabs>
+
+Every option adds `@codexa/core` to your project, ready to import a subpath.
+
+```ts
+import { createApp, definePlugin } from '@codexa/core/http';
+```
+
+Deno also accepts a `jsr:` specifier directly, with no install step first.
+
+```ts
+import { createApp, definePlugin } from 'jsr:@codexa/core/http';
+```
+
+<Callout type="warn">
+  Starting a server on Node.js still needs a Fetch API adapter, such as `@hono/node-server`, since Node does not accept a `fetch` handler the way Deno and Bun do. See [Runs wherever the Fetch API runs](/docs#runs-wherever-the-fetch-api-runs) in the introduction for a working example.
+</Callout>
+
+## Import maps
+
+A project that manages its imports through `deno.json` or `package.json` can list only the subpaths it actually uses, and add more as the project grows.
+
+```json title="deno.json"
+{
+  "imports": {
+    "@codexa/core/http": "jsr:@codexa/core/http",
+    "@codexa/core/config": "jsr:@codexa/core/config",
+    "@codexa/core/store": "jsr:@codexa/core/store"
+  }
+}
+```
+
+The full subpath list is on the [Introduction](/docs) page.
+
+## What you get
+
+- **Package**: `@codexa/core`
+- **Registry**: [jsr.io/@codexa/core](https://jsr.io/@codexa/core)
+- **Source**: [github.com/Codexa-by-HQ/codexa-core](https://github.com/Codexa-by-HQ/codexa-core)
+- **License**: MIT
+- **Runtimes**: Deno, Node.js, Bun, and browsers, confirmed by JSR's own compatibility check
+
+<Cards>
+  <Card title="Quick Start" href="/docs/quick-start" description="Build a small application and run it end to end." />
+  <Card title="HTTP Overview" href="/docs/http/overview" description="The app lifecycle: boot, dispatch, and shutdown." />
+</Cards>

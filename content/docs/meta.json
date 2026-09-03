@@ -1,0 +1,26 @@
+{
+  "title": "Codexa Core",
+  "root": true,
+  "pages": [
+    "index",
+    "installation",
+    "quick-start",
+    "---Core---",
+    "http",
+    "openapi",
+    "configuration",
+    "---Data & Storage---",
+    "event-bus",
+    "store",
+    "cache",
+    "storage",
+    "---Utilities---",
+    "logger",
+    "providers",
+    "utilities",
+    "---Plugins---",
+    "cli",
+    "official-plugins",
+    "examples"
+  ]
+}
