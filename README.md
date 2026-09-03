@@ -1,45 +1,51 @@
-# .
+# Codexa Core Docs
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
+The official documentation site for [Codexa Core](https://github.com/Codexa-by-HQ/codexa-core), a modular, plugin-first toolkit for building Deno backends.
 
-Run development server:
+Live at: [DOCS_URL_PLACEHOLDER](DOCS_URL_PLACEHOLDER)
+
+Built with [Next.js](https://nextjs.org) and [Fumadocs](https://fumadocs.dev), content is written in MDX under `content/docs/`.
+
+## Getting started
 
 ```bash
+npm install
 npm run dev
-# or
-pnpm dev
-# or
-yarn dev
 ```
 
-Open http://localhost:3000 with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-## Explore
+## Scripts
 
-In the project, you can see:
+| Command             | Purpose                                      |
+| -------------------- | --------------------------------------------- |
+| `npm run dev`        | Start the local dev server (Turbopack)       |
+| `npm run build`      | Production build                             |
+| `npm run start`      | Serve a production build                     |
+| `npm run types:check`| Generate route types, then type-check        |
+| `npm run lint`       | Lint with Biome                              |
+| `npm run format`     | Format with Biome                            |
 
-- `lib/source.ts`: Code for content source adapter, [`loader()`](https://fumadocs.dev/docs/headless/source-api) provides the interface to access your content.
-- `lib/layout.shared.tsx`: Shared options for layouts, optional but preferred to keep.
+## Project structure
 
-| Route                     | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `app/(home)`              | The route group for your landing page and other pages. |
-| `app/docs`                | The documentation layout and pages.                    |
-| `app/api/search/route.ts` | The Route Handler for search.                          |
+```
+content/docs/en/        MDX documentation pages, grouped by module
+src/app/[lang]/         Localized routes: landing page, docs layout, OG/sitemap/robots
+src/components/home/    Landing page sections (hero, install tabs, code showcase, features)
+src/lib/                Shared config: i18n, source loader, layout options, app metadata
+public/                 Static assets: logo, favicons
+```
 
-### Fumadocs MDX
+## Content
 
-Collections are defined with the [Macro API](https://fumadocs.dev/docs/mdx/macro) in `lib/source.ts`.
+Each page lives at `content/docs/en/<path>.mdx` with frontmatter (`title`, `description`, optional `icon`). Sidebar grouping and ordering come from the `meta.json` file in each folder, top-level sections use the `---Label---` separator syntax.
 
-Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
+Only `en` has real content today. `ar`, `ur`, `fr`, and `nl` are wired up through `fumadocs-core/i18n` but not yet translated.
 
-## Learn More
+## Deployment
 
-To learn more about Next.js and Fumadocs, take a look at the following
-resources:
+Deployed on Vercel. No custom Build/Output Directory overrides are needed, Vercel's Next.js framework preset handles this project as-is. Set `NEXT_PUBLIC_SITE_URL` to the production domain so canonical URLs, the sitemap, and OG images resolve correctly instead of falling back to `localhost:3000`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js
-  features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [Fumadocs](https://fumadocs.dev) - learn about Fumadocs
+## License
+
+MIT © Codexa-by-HQ
