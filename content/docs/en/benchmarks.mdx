@@ -1,0 +1,43 @@
+---
+title: "Benchmarks"
+description: "How Codexa Core's HTTP layer compares to raw Deno.serve, Oak, Hono, and Express on the same three endpoints."
+icon: "Gauge"
+---
+
+import { BenchmarkChart, BenchmarkMeta } from '@/components/benchmark-chart';
+
+Three identical endpoints, `GET /hello`, `GET /users/:id`, and `POST /users` with a validated body, implemented once per framework and load tested with the same settings. Codexa Core is loaded from its published JSR package, the same way a real consumer would install it, not from local source. Numbers are from one developer machine and will vary by hardware, treat them as directional. See [Reproducing this](#reproducing-this) to run them yourself.
+
+<BenchmarkChart />
+
+<BenchmarkMeta />
+
+## What this shows
+
+- **Raw `Deno.serve`** is the ceiling, no routing, no validation library overhead beyond Zod, just a manual `if` chain.
+- **Codexa Core** stays close to that ceiling while adding a plugin system, a radix tree router, typed cross-plugin services, and request lifecycle hooks that the raw baseline has none of.
+- **Oak**, **Hono**, and **Express** are included as the comparison points most people already have intuition for, Oak and Hono as established Deno frameworks, Express as the most familiar reference point overall.
+
+## Methodology
+
+- **Load generator**: [autocannon](https://github.com/mcollina/autocannon), 50 concurrent connections, 10 second measurement window per endpoint per framework, a 3 second warmup run discarded before each measurement.
+- **Endpoints**: identical route shapes and identical Zod validation schema across every framework, so the comparison is routing and framework overhead, not differing amounts of work per request.
+- **Isolation**: each framework runs as its own process on its own port, benchmarked one at a time, never concurrently with another framework under test.
+- **What is not measured**: cold start time, memory usage, and behavior under sustained production load over hours are all out of scope here, this is a short-run throughput and latency snapshot only.
+
+## Reproducing this
+
+The full harness lives in `benchmarks/` in both the [docs site](https://github.com/Codexa-by-HQ/codexa-core-docs/tree/master/benchmarks) and the [`codexa-core`](https://github.com/Codexa-by-HQ/codexa-core/tree/master/benchmarks) repository, two server files (one Deno file covering Codexa Core, raw `Deno.serve`, Oak, and Hono, selected by an environment variable, plus one Express file) and a Node orchestrator script.
+
+```bash
+cd benchmarks
+npm install
+npm run bench
+```
+
+This starts each server in turn, runs the load test, and writes fresh results to `benchmarks/results/results.json` and `results.md`.
+
+<Cards>
+  <Card title="HTTP" href="/docs/http/overview" description="The plugin-first router and lifecycle these numbers are measuring." />
+  <Card title="Installation" href="/docs/installation" description="Install the exact package these benchmarks load from JSR." />
+</Cards>

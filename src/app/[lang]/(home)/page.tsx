@@ -1,11 +1,15 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
+import type { SVGProps } from 'react';
 import {
   ArrowRight,
+  BadgeCheck,
   Blocks,
   Braces,
   Cable,
+  Globe,
   HardDrive,
+  Package,
   Radio,
   Route,
   Terminal,
@@ -13,6 +17,7 @@ import {
 } from 'lucide-react';
 import { InstallTabs } from '@/components/home/install-tabs';
 import { CodeWindow, kw, str, cm } from '@/components/home/code-window';
+import { BenchmarkChart } from '@/components/benchmark-chart';
 import { Footer } from '@/components/footer';
 import { docsRoute, gitConfig } from '@/lib/shared';
 
@@ -22,7 +27,21 @@ export const metadata: Metadata = {
   },
 };
 
+function GithubIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
+      <path d="M12 .5C5.73.5.5 5.73.5 12c0 5.09 3.29 9.4 7.86 10.93.57.1.79-.25.79-.55 0-.27-.01-1.17-.02-2.12-3.2.7-3.87-1.36-3.87-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.78 1.19 1.78 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 2.9-.39c.98 0 1.97.13 2.9.39 2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.82 1.19 3.08 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14 0 1.55-.01 2.79-.01 3.17 0 .3.21.66.79.55A10.51 10.51 0 0 0 23.5 12c0-6.27-5.23-11.5-11.5-11.5Z" />
+    </svg>
+  );
+}
+
 const runtimes = ['Deno', 'Bun', 'Cloudflare Workers', 'Node.js'];
+
+const stats = [
+  { icon: Package, value: '16', label: 'focused subpaths' },
+  { icon: Globe, value: '4', label: 'runtimes supported' },
+  { icon: BadgeCheck, value: '100%', label: 'JSR score' },
+];
 
 const subpaths = [
   'http',
@@ -122,10 +141,27 @@ export default function HomePage() {
     <>
     <main className="flex flex-1 flex-col">
       {/* Hero */}
-      <section className="relative overflow-hidden border-b border-fd-border">
+      <section className="relative border-b border-fd-border overflow-x-hidden">
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_-10%,var(--color-fd-primary)/12%,transparent_60%)]"
+          className="pointer-events-none absolute -top-14 inset-x-0 bottom-0 -z-20"
+          style={{
+            backgroundImage:
+              'linear-gradient(to right, color-mix(in srgb, var(--color-fd-primary) 18%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--color-fd-primary) 18%, transparent) 1px, transparent 1px)',
+            backgroundSize: '40px 40px',
+            WebkitMaskImage:
+              'radial-gradient(ellipse 70% 60% at 50% 0%, black, transparent 78%)',
+            maskImage:
+              'radial-gradient(ellipse 70% 60% at 50% 0%, black, transparent 78%)',
+          }}
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -top-14 inset-x-0 bottom-0 -z-10"
+          style={{
+            backgroundImage:
+              'radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-fd-primary) 38%, transparent), transparent 48%)',
+          }}
         />
         <div className="mx-auto flex max-w-4xl flex-col items-center px-6 py-20 text-center sm:py-28">
           <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-fd-border bg-fd-card px-3 py-1 text-xs font-medium text-fd-muted-foreground">
@@ -133,15 +169,20 @@ export default function HomePage() {
             Published on JSR &middot; @codexa/core
           </span>
 
-          <h1 className="text-4xl font-bold tracking-tight text-fd-foreground sm:text-6xl">
-            The <span className="text-fd-primary">plugin-first</span> way to
-            build Deno APIs
+          <h1 className="text-4xl font-extrabold leading-[1.1] tracking-tight text-fd-foreground sm:text-6xl">
+            The{' '}
+            <span className="bg-gradient-to-r from-fd-primary to-emerald-400 bg-clip-text text-transparent">
+              plugin-first
+            </span>{' '}
+            framework
+            <br />
+            for building Deno APIs
           </h1>
 
           <p className="mt-6 max-w-2xl text-balance text-lg text-fd-muted-foreground">
-            Codexa Core is a modular HTTP toolkit where routes, middleware,
-            and services are all plugins with their own lifecycle. The same
-            app runs unchanged on Bun, Cloudflare Workers, and Node.js.
+            A plugin-first HTTP framework for Deno. Every route, middleware,
+            and service is a plugin with its own lifecycle, and the same app
+            runs unchanged on Bun, Cloudflare Workers, and Node.js.
           </p>
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
@@ -156,8 +197,28 @@ export default function HomePage() {
               href={githubUrl}
               className="inline-flex items-center gap-2 rounded-lg border border-fd-border px-5 py-2.5 text-sm font-semibold text-fd-foreground transition-colors hover:bg-fd-accent"
             >
-              View on GitHub
+              <GithubIcon className="size-4" />
+              Star on GitHub
             </Link>
+          </div>
+
+          <div className="mt-10 flex divide-x divide-fd-border overflow-hidden rounded-xl border border-fd-border bg-fd-card">
+            {stats.map((stat) => (
+              <div
+                key={stat.label}
+                className="flex flex-1 flex-col items-center justify-center gap-1 px-4 py-3 sm:px-8"
+              >
+                <div className="flex items-center gap-1.5">
+                  <stat.icon className="size-3.5 text-fd-primary" />
+                  <span className="text-xl font-bold text-fd-foreground sm:text-2xl">
+                    {stat.value}
+                  </span>
+                </div>
+                <div className="whitespace-nowrap text-xs text-fd-muted-foreground">
+                  {stat.label}
+                </div>
+              </div>
+            ))}
           </div>
 
           <div className="mt-10 flex justify-center">
@@ -293,10 +354,12 @@ export default function HomePage() {
             {features.map((feature) => (
               <div
                 key={feature.title}
-                className="rounded-xl border border-fd-border bg-fd-card p-5"
+                className="group rounded-xl border border-fd-border bg-fd-card p-5 transition-colors hover:border-fd-primary/50"
               >
-                <feature.icon className="size-5 text-fd-primary" />
-                <h3 className="mt-3 font-semibold text-fd-foreground">
+                <div className="flex size-10 items-center justify-center rounded-lg bg-fd-primary/10 text-fd-primary transition-colors group-hover:bg-fd-primary/15">
+                  <feature.icon className="size-5" />
+                </div>
+                <h3 className="mt-4 font-semibold text-fd-foreground">
                   {feature.title}
                 </h3>
                 <p className="mt-2 text-sm text-fd-muted-foreground">
@@ -304,6 +367,39 @@ export default function HomePage() {
                 </p>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Benchmarks */}
+      <section className="border-b border-fd-border bg-fd-card/40">
+        <div className="mx-auto max-w-3xl px-6 py-20">
+          <div className="mx-auto max-w-2xl text-center">
+            <h2 className="text-2xl font-bold text-fd-foreground sm:text-3xl">
+              Faster than Oak and Express
+            </h2>
+            <p className="mt-4 text-fd-muted-foreground">
+              A GET request measured with the same 50-connection load test
+              across frameworks. Full methodology, all three endpoints, and
+              raw Deno.serve as a baseline are in the benchmarks docs.
+            </p>
+          </div>
+
+          <div className="mt-12">
+            <BenchmarkChart
+              excludeKeys={['deno', 'hono']}
+              onlyEndpoint="hello"
+            />
+          </div>
+
+          <div className="mt-8 text-center">
+            <Link
+              href={`${docsRoute}/benchmarks`}
+              className="inline-flex items-center gap-1.5 text-sm font-semibold text-fd-primary hover:underline"
+            >
+              View full benchmarks
+              <ArrowRight className="size-3.5" />
+            </Link>
           </div>
         </div>
       </section>

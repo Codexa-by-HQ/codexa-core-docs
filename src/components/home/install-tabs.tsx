@@ -30,7 +30,11 @@ export function InstallTabs() {
 
   return (
     <div className="w-full max-w-xl overflow-hidden rounded-xl border border-fd-border bg-fd-card">
-      <div className="flex items-center gap-1 border-b border-fd-border px-2 pt-2">
+      <div className="flex items-center gap-1.5 border-b border-fd-border bg-fd-muted/40 px-3 pt-2">
+        <span className="mb-2 size-2 rounded-full bg-[#ff5f56]" />
+        <span className="mb-2 size-2 rounded-full bg-[#ffbd2e]" />
+        <span className="mb-2 size-2 rounded-full bg-[#27c93f]" />
+        <span className="mx-1 mb-2 h-3 w-px bg-fd-border" />
         {commands.map((item, index) => (
           <button
             key={item.label}

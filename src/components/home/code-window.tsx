@@ -9,10 +9,10 @@ export function CodeWindow({
 }) {
   return (
     <div className="w-full overflow-hidden rounded-xl border border-fd-border bg-fd-card shadow-sm">
-      <div className="flex items-center gap-2 border-b border-fd-border px-4 py-2.5">
-        <span className="size-2.5 rounded-full bg-fd-muted" />
-        <span className="size-2.5 rounded-full bg-fd-muted" />
-        <span className="size-2.5 rounded-full bg-fd-muted" />
+      <div className="flex items-center gap-2 border-b border-fd-border bg-fd-muted/40 px-4 py-2.5">
+        <span className="size-2.5 rounded-full bg-[#ff5f56]" />
+        <span className="size-2.5 rounded-full bg-[#ffbd2e]" />
+        <span className="size-2.5 rounded-full bg-[#27c93f]" />
         <span className="ml-2 font-mono text-xs text-fd-muted-foreground">
           {filename}
         </span>
