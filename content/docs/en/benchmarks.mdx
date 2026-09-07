@@ -1,6 +1,6 @@
 ---
 title: "Benchmarks"
-description: "How Codexa Core's HTTP layer compares to raw Deno.serve, Oak, Hono, Express, and Thunder on the same three endpoints."
+description: "How Codexa Core's HTTP layer compares to raw Deno.serve, Oak, Hono, and Express on the same three endpoints."
 icon: "Gauge"
 ---
 
@@ -8,15 +8,15 @@ import { BenchmarkChart, BenchmarkMeta } from '@/components/benchmark-chart';
 
 Three identical endpoints, `GET /hello`, `GET /users/:id`, and `POST /users` with a validated body, implemented once per framework and load tested with the same settings. Codexa Core is loaded from its published JSR package (`@codexa/core@1.0.7`), the same way a real consumer would install it, not from local source. Every number below is the median of three independent full runs, not a single sample. Numbers are from one developer machine and will vary by hardware, treat them as directional. See [Reproducing this](#reproducing-this) to run them yourself.
 
-<BenchmarkChart />
+<BenchmarkChart excludeKeys={['thunder']} />
 
 <BenchmarkMeta />
 
 ## What this shows
 
 - **Raw `Deno.serve`** is the ceiling, no routing, no validation library overhead beyond Zod, just a manual `if` chain.
-- **Codexa Core** lands in the same tier as Hono and Thunder on both GET routes (within about 10-15% of the raw ceiling), and clearly ahead of Oak and Express on all three endpoints, while adding a plugin system, a radix tree router, typed cross-plugin services, and request lifecycle hooks that the raw baseline has none of.
-- **Oak**, **Hono**, **Express**, and **Thunder** are included as the comparison points most people already have intuition for, Oak and Hono as established Deno frameworks, Express as the most familiar reference point overall, and Thunder as another Deno framework in the same file-based-routing, Zod-validated space as Codexa Core.
+- **Codexa Core** lands in the same tier as Hono on both GET routes (within about 10-15% of the raw ceiling), and clearly ahead of Oak and Express on all three endpoints, while adding a plugin system, a radix tree router, typed cross-plugin services, and request lifecycle hooks that the raw baseline has none of.
+- **Oak**, **Hono**, and **Express** are included as the comparison points most people already have intuition for, Oak and Hono as established Deno frameworks, Express as the most familiar reference point overall.
 
 ## Methodology
 
@@ -28,7 +28,7 @@ Three identical endpoints, `GET /hello`, `GET /users/:id`, and `POST /users` wit
 
 ## Reproducing this
 
-The harness (one Deno file covering Codexa Core, raw `Deno.serve`, Oak, and Hono selected by an environment variable, one Express file, a vendored `thunder/` project since Thunder ships as a project scaffold rather than an importable package, and a Node orchestrator script) is kept separately, outside both the `codexa-core` and `codexa-core-docs` repositories, so neither repo has to carry framework server code alongside its own source. Both repos track only the generated output, at `benchmarks/results/results.json` and `results.md`, which is what this page reads.
+The harness (one Deno file covering Codexa Core, raw `Deno.serve`, Oak, and Hono selected by an environment variable, one Express file, and a Node orchestrator script) is kept separately, outside both the `codexa-core` and `codexa-core-docs` repositories, so neither repo has to carry framework server code alongside its own source. Both repos track only the generated output, at `benchmarks/results/results.json` and `results.md`, which is what this page reads.
 
 <Cards>
   <Card title="HTTP" href="/docs/http/overview" description="The plugin-first router and lifecycle these numbers are measuring." />
