@@ -387,7 +387,7 @@ export default function HomePage() {
 
           <div className="mt-12">
             <BenchmarkChart
-              excludeKeys={['deno', 'hono']}
+              excludeKeys={['deno', 'hono', 'thunder']}
               onlyEndpoint="hello"
             />
           </div>
