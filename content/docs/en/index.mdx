@@ -5,7 +5,7 @@ icon: "BookOpen"
 ---
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
-import { Braces, Database, Server, Settings } from 'lucide-react';
+import { Braces, Database, Package, Server, Settings } from 'lucide-react';
 
 Codexa Core targets Deno as its primary runtime, but keeps its HTTP layer runtime neutral by design. Every request handler is a plain function that accepts a standard `Request` and returns a standard `Response`. This is what lets the same application run on Bun and Cloudflare Workers unchanged, and on Node.js with a small Fetch API adapter.
 
@@ -13,6 +13,7 @@ Instead of one large bundle, the framework ships as small, focused packages. A p
 
 - An HTTP layer built on a radix tree router
 - An OpenAPI 3.1 generator
+- A typed frontend SDK generator powered by OpenAPI route metadata
 - Environment and database configuration
 - An event bus
 - A key value store
@@ -23,6 +24,7 @@ Instead of one large bundle, the framework ships as small, focused packages. A p
 <Cards>
   <Card icon={<Server />} title="HTTP" href="/docs/http/overview" description="The plugin-first request layer this whole toolkit is built around." />
   <Card icon={<Braces />} title="OpenAPI" href="/docs/openapi/generating-documents" description="Generate a real OpenAPI 3.1 document from route metadata." />
+  <Card icon={<Package />} title="SDK" href="/docs/sdk/overview" description="Generate a versioned, typed frontend package from documented routes." />
   <Card icon={<Settings />} title="Configuration" href="/docs/configuration/environment-variables" description="Typed environment variables, MongoDB, Redis, and storage config." />
   <Card icon={<Database />} title="Store" href="/docs/store/overview" description="Memory, Redis, or Deno KV, behind one key value interface." />
 </Cards>
@@ -115,6 +117,7 @@ Each capability below is its own subpath, so a project that only needs the HTTP 
 | --- | --- |
 | `@codexa/core/http` | Plugin first HTTP framework, built on the Fetch API and a radix tree router |
 | `@codexa/core/openapi` | OpenAPI 3.1 document generator, built from route metadata |
+| `@codexa/core/sdk` | Frontend SDK generator, built from the same OpenAPI route metadata |
 | `@codexa/core/config` | Environment variables, MongoDB, Redis, and storage configuration |
 | `@codexa/core/bus` | Local or Redis backed event bus |
 | `@codexa/core/store` | Memory, Redis, or Deno KV key value store |
@@ -128,7 +131,7 @@ Each capability below is its own subpath, so a project that only needs the HTTP 
 | `@codexa/core/ttl` | Duration string parsing, such as turning `'15m'` into seconds |
 | `@codexa/core/response` | Standard response payload builders |
 | `@codexa/core/query` | Query string parsing |
-| `@codexa/core/cli` | The `codexa plugin` command, for installing plugins from a Git repository |
+| `@codexa/core/cli` | The `codexa plugin` and `codexa sdk` commands, for installing plugins and generating SDK packages |
 
 ## Where the code lives
 

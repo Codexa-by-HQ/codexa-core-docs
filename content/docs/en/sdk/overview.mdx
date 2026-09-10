@@ -1,0 +1,298 @@
+---
+title: "Generated SDK"
+description: "Generate, version, package, and install a typed frontend client from the OpenAPI routes in a Codexa Core backend."
+icon: "Package"
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+`@codexa/core/sdk` generates a small TypeScript package from a Codexa application's public route metadata. The package exposes typed namespaces and methods such as `ProjectSDK.projects.get()`, uses the standard Fetch API at runtime, and can run in browsers, React client components, Next.js Server Components, and route handlers.
+
+<Callout type="info">
+  This is generated HTTP client code, not RPC or gRPC. Your frontend calls normal HTTP endpoints. The generator removes the repetitive URL, query-string, header, body, response parsing, and TypeScript declaration work.
+</Callout>
+
+## The opt-in boundary
+
+SDK generation is deliberately controlled per route. A route is generated only when it has `options.openapi` and is enabled. A route without OpenAPI metadata still works on the backend, but no SDK method or type is created for it. `openapi.exclude: true` also keeps a route out.
+
+```ts title="src/app.ts"
+import { createApp, definePlugin } from '@codexa/core/http';
+import { zod } from '@codexa/core/providers/zod';
+
+const ProjectResponse = zod.object({
+  data: zod.object({
+    id: zod.string(),
+    name: zod.string(),
+  }),
+});
+
+const projects = definePlugin({
+  name: 'projects',
+  setup(scope) {
+    scope.route({
+      method: 'GET',
+      path: '/projects/:id',
+      handler: (ctx) => ctx.json({
+        data: { id: ctx.params.id, name: 'SDK project' },
+      }),
+      options: {
+        name: 'projects.get',
+        tags: ['projects:read'],
+        openapi: {
+          summary: 'Get one project',
+          params: zod.object({ id: zod.string() }),
+          responses: {
+            200: {
+              description: 'Project record',
+              schema: ProjectResponse,
+            },
+          },
+        },
+      },
+    });
+
+    // Runs on the backend, but is intentionally absent from the SDK.
+    scope.route({
+      method: 'GET',
+      path: '/projects/internal-metrics',
+      handler: (ctx) => ctx.json({ data: { queueDepth: 3 } }),
+      options: { name: 'projects.internalMetrics' },
+    });
+  },
+});
+
+export default createApp('project-api').install(projects);
+```
+
+The route `name` determines the generated API shape. `projects.get` becomes `ProjectSDK.projects.get`. The OpenAPI `params`, `query`, `body`, and successful response schema become TypeScript input and response types.
+
+<Callout type="warn">
+  Client permissions are a convenience guard, not a security boundary. Keep authentication, authorization, validation, and rate limiting on the backend. Browser code and package files can always be inspected or bypassed by an end user.
+</Callout>
+
+## Generate and install
+
+<Steps>
+
+<Step>
+
+### Make the CLI available
+
+The SDK commands run `npm pack` while generating and your selected package manager while installing, so the CLI needs read, write, environment, and subprocess permissions.
+
+```bash
+deno install --global -A -n codexa jsr:@codexa/core/cli
+```
+
+</Step>
+
+<Step>
+
+### Generate a versioned tarball
+
+Run the command from the backend project. The entrypoint must default-export the Codexa app, or pass `--export <name>` for a named export.
+
+```bash
+codexa sdk generate ./src/app.ts \
+  --project . \
+  --out ./generated/project-sdk \
+  --name @acme/project-sdk \
+  --client ProjectSDK \
+  --base-url http://localhost:8000 \
+  -V 1.0.0
+```
+
+The required `-V` value creates an isolated version directory:
+
+```text
+generated/project-sdk/
+└── 1.0.0/
+    ├── src/index.ts
+    ├── dist/index.js
+    ├── dist/index.d.ts
+    ├── package.json
+    └── acme-project-sdk-1.0.0.tgz
+```
+
+</Step>
+
+<Step>
+
+### Install the archive into the frontend
+
+```bash
+codexa sdk install ./generated/project-sdk \
+  --project ../frontend \
+  -V 1.0.0
+```
+
+The CLI finds the matching `.tgz`, detects npm, pnpm, Yarn, or Bun from the frontend lockfile, and records a `file:` dependency in `package.json`. Override detection with `--package-manager pnpm` when needed.
+
+</Step>
+
+</Steps>
+
+You can generate and install in one command with `--install`:
+
+```bash
+codexa sdk generate ./src/app.ts \
+  --project . \
+  --out ./generated/project-sdk \
+  --name @acme/project-sdk \
+  --client ProjectSDK \
+  --install ../frontend \
+  -V 1.0.0
+```
+
+## Inputs and return values
+
+Every generated method accepts one object with typed `params`, `query`, `body`, `headers`, and `signal` fields. Only fields relevant to the route need to be supplied.
+
+```ts
+const project = await ProjectSDK.projects.get({
+  params: { id: 'p_100' },
+  query: { include: ['members'] },
+  headers: { 'x-trace-id': crypto.randomUUID() },
+});
+```
+
+Calling a method directly parses JSON and unwraps a top-level `{ data: ... }` payload. Each call also exposes lower-level executors when the response envelope or native `Response` is needed.
+
+```ts
+const call = ProjectSDK.projects.get({ params: { id: 'p_100' } });
+
+const data = await call;          // parsed and data-unwrapped
+const json = await call.json();   // complete parsed JSON payload
+const response = await call.raw(); // native Response
+```
+
+Path parameters are URI-encoded, array query values are repeated, JSON bodies receive `content-type: application/json` automatically, non-success responses throw with the response text, and versioned Codexa routes receive their fixed version header automatically.
+
+## Browser and React usage
+
+Use the static client when one configuration belongs to the whole browser session.
+
+```ts title="src/lib/project-sdk.ts"
+import { ProjectSDK } from '@acme/project-sdk';
+
+ProjectSDK.init({
+  baseUrl: import.meta.env.VITE_API_URL,
+  headers: () => ({
+    authorization: `Bearer ${localStorage.getItem('token') ?? ''}`,
+  }),
+  permissions: ['projects.get', 'projects.list'],
+});
+
+export { ProjectSDK };
+```
+
+```tsx title="src/components/project.tsx"
+'use client';
+
+import { ProjectSDK } from '../lib/project-sdk';
+
+export async function loadProject(id: string) {
+  return await ProjectSDK.projects.get({ params: { id } });
+}
+```
+
+`permissions` accepts route names and `'*'`. If a requested route is not allowed, the SDK throws before making a network request. You can check a generated method before rendering an action:
+
+```ts
+ProjectSDK.can(ProjectSDK.projects.get); // boolean
+```
+
+## Next.js server usage
+
+Server requests must not share mutable authentication state. Create an isolated SDK instance for each request with `create()` or the constructor.
+
+```ts title="app/api/projects/[id]/route.ts"
+import { ProjectSDK } from '@acme/project-sdk';
+
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  const { id } = await context.params;
+  const sdk = ProjectSDK.create({
+    baseUrl: process.env.CODEXA_API_URL,
+    headers: {
+      authorization: request.headers.get('authorization') ?? '',
+    },
+    permissions: ['projects.get'],
+  });
+
+  return Response.json(await sdk.projects.get({ params: { id } }));
+}
+```
+
+<Tabs items={['Factory', 'Constructor', 'Static client']}>
+
+<Tab value="Factory">
+
+```ts
+const sdk = ProjectSDK.create(options);
+await sdk.projects.get({ params: { id: 'p_100' } });
+```
+
+</Tab>
+
+<Tab value="Constructor">
+
+```ts
+const sdk = new ProjectSDK(options);
+await sdk.projects.get({ params: { id: 'p_100' } });
+```
+
+</Tab>
+
+<Tab value="Static client">
+
+```ts
+ProjectSDK.init(options);
+await ProjectSDK.projects.get({ params: { id: 'p_100' } });
+```
+
+</Tab>
+
+</Tabs>
+
+The generated package is plain ESM with JavaScript and declaration files. A normal Next.js 16 app can consume it directly; `transpilePackages` and `experimental.externalDir` are not required when installing the generated `.tgz`.
+
+## Publish a changed API
+
+When the backend gains a documented route, generate a new SDK version and install that exact version in the frontend.
+
+```bash
+codexa sdk generate ./src/app.ts --project . \
+  --out ./generated/project-sdk --name @acme/project-sdk \
+  --client ProjectSDK -V 1.0.1
+
+codexa sdk install ./generated/project-sdk \
+  --project ../frontend -V 1.0.1
+```
+
+Existing version directories are preserved. Generating `1.0.0` again fails instead of silently replacing it; pass `--force` only when intentionally rebuilding that same version. Installing `1.0.1` updates the frontend's `file:` dependency to the new tarball and makes newly generated methods and types available after the package manager finishes.
+
+## CLI reference
+
+| Option | Meaning |
+| --- | --- |
+| `--project <directory>` | Backend root for generation, or frontend root for installation |
+| `--out <directory>` | Parent directory for versioned SDK output |
+| `--name <package-name>` | npm package name written into the generated package |
+| `--client <class-name>` | Exported client class; defaults to `CodexaSDK` |
+| `--export <name>` | Named app/OpenAPI export instead of the default export |
+| `--base-url <url>` | Optional default API origin embedded in the client |
+| `-V, --version <semver>` | Required SDK package version |
+| `--force` | Replace only the selected existing version directory |
+| `--install <directory>` | Install immediately after generation |
+| `--package-manager <name>` | Force `npm`, `pnpm`, `yarn`, or `bun` |
+
+<Cards>
+  <Card title="Generating OpenAPI" href="/docs/openapi/generating-documents" description="Define the route metadata and schemas that become SDK methods and types." />
+  <Card title="Versioned Routes" href="/docs/http/versioned-routes" description="Attach fixed version headers that generated SDK methods send automatically." />
+  <Card title="CLI" href="/docs/cli" description="Install and inspect source-distributed Codexa plugins." />
+</Cards>

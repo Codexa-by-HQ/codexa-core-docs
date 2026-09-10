@@ -22,6 +22,10 @@ const document = generateOpenApiDocument(app, {
   A route only appears in the document if it has `options.openapi` set. A route with no `openapi` metadata still serves real traffic, it is simply invisible to the generator. This is deliberate: the document only ever describes what you chose to document, not everything that happens to be registered.
 </Callout>
 
+<Callout type="info">
+  The same opt-in metadata also powers [SDK generation](/docs/sdk/overview). Each included route becomes a typed SDK method, while its `params`, `query`, `body`, and response schemas become frontend TypeScript types.
+</Callout>
+
 ## Documenting a route
 
 `openapi` accepts Zod schemas for `params`, `query`, `headers`, and `body`, converted to JSON Schema automatically.
@@ -188,6 +192,7 @@ await Deno.writeTextFile('openapi.json', JSON.stringify(document, null, 2));
 Useful in CI, to diff the generated spec against a committed copy and catch an accidental breaking change to a route's shape before it ships.
 
 <Cards>
+  <Card title="Generated SDK" href="/docs/sdk/overview" description="Package documented routes as an installable, typed frontend client." />
   <Card title="Serving & Tooling" href="/docs/openapi/serving-and-tooling" description="Serve the document from a route, and load it into Swagger UI, Scalar, or Postman." />
   <Card title="Versioned Routes" href="/docs/http/versioned-routes" description="How version() and versionHeader work at the HTTP layer." />
 </Cards>

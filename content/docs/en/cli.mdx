@@ -1,6 +1,6 @@
 ---
 title: "CLI"
-description: "The codexa plugin CLI: pull a plugin's source into your project from a pinned Git ref, with full rollback if anything fails."
+description: "Install source-distributed plugins and generate versioned frontend SDK packages from Codexa applications."
 icon: "Terminal"
 ---
 
@@ -8,16 +8,18 @@ import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { TypeTable } from 'fumadocs-ui/components/type-table';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-`@codexa/core/cli` installs a plugin's actual source code into your project, copied from a GitHub repository at an exact, pinned commit or tag. This is a different kind of "install" than [`app.install(plugin, config)`](/docs/http/plugins#installing-more-than-one-plugin), which registers an already-imported plugin object into a running app. The CLI is what gets that plugin's code onto disk in the first place.
+`@codexa/core/cli` has two focused workflows: it installs a plugin's source code from an exact Git ref, and it generates and installs typed frontend SDK tarballs from a Codexa application's documented routes. This is different from [`app.install(plugin, config)`](/docs/http/plugins#installing-more-than-one-plugin), which registers an already-imported plugin object into a running app.
 
 ```bash
 codexa plugin add https://github.com/Codexa-by-HQ/oauth --ref v1.0.0
 codexa plugin list
+codexa sdk generate ./src/app.ts --out ./generated/api-sdk --name @acme/api-sdk -V 1.0.0
+codexa sdk install ./generated/api-sdk --project ../frontend -V 1.0.0
 ```
 
 ## Getting the codexa command
 
-The CLI only ever touches the filesystem and shells out to `git` and `deno` itself, so it needs exactly those permissions, nothing broader. Set it up either as a global command, or scoped to one project as a `deno task`.
+Set the CLI up either as a global command, or scoped to one project as a `deno task`. The examples below use `-A` so both plugin installation and SDK generation/install work from the same command: plugin commands shell out to `git` and `deno`, while SDK install also shells out to your frontend package manager.
 
 <Tabs items={['Global install', 'Project deno task']}>
 
@@ -26,6 +28,8 @@ The CLI only ever touches the filesystem and shells out to `git` and `deno` itse
 A one-time install puts `codexa` on your `PATH`, usable from any project afterward.
 
 ```bash
+deno install --global -A -n codexa jsr:@codexa/core/cli
+OR
 deno install --global --allow-read --allow-write --allow-run=git,deno -n codexa jsr:@codexa/core/cli
 ```
 
@@ -42,7 +46,7 @@ No global install, and the exact CLI version used is pinned per project alongsid
 ```json title="deno.json"
 {
   "tasks": {
-    "codexa": "deno run --allow-read --allow-write --allow-run=git,deno jsr:@codexa/core/cli"
+    "codexa": "deno run -A jsr:@codexa/core/cli"
   }
 }
 ```
@@ -56,7 +60,7 @@ deno task codexa plugin add https://github.com/Codexa-by-HQ/oauth --ref v1.0.0
 </Tabs>
 
 <Callout type="info">
-  `--allow-run=git,deno` scopes the permission to exactly the two subprocesses the CLI actually runs, `git` to fetch the plugin's source, and `deno` for the `deno install` and `deno check` steps below. A bare `--allow-run` would also work, but grants more than the CLI needs.
+  If you only use `codexa plugin` commands, you can narrow permissions to `--allow-read --allow-write --allow-run=git,deno`. SDK install needs permission to run the detected package manager, such as `npm`, `pnpm`, `yarn`, or `bun`.
 </Callout>
 
 ## Adding a plugin
@@ -219,7 +223,30 @@ const app = createApp();
 await installOAuthPlugin(app, { /* ... */ });
 ```
 
+## Generating a frontend SDK
+
+The SDK commands turn only routes with `options.openapi` into a typed, fetch-based package. `-V` is required: generation writes the package and its `.tgz` archive inside that version's directory, while installation selects the same version and adds its tarball to the frontend package manager.
+
+```bash
+codexa sdk generate ./src/app.ts \
+  --project . \
+  --out ./generated/api-sdk \
+  --name @acme/api-sdk \
+  --client AcmeSDK \
+  --base-url http://localhost:8000 \
+  -V 1.0.0
+
+codexa sdk install ./generated/api-sdk \
+  --project ../frontend \
+  -V 1.0.0
+```
+
+Use `--install ../frontend` on `sdk generate` to run both steps together. The installer detects npm, pnpm, Yarn, or Bun from the frontend lockfile; `--package-manager` overrides that choice. A repeated version fails safely unless `--force` is supplied.
+
+See [Generated SDK](/docs/sdk/overview) for route definitions, generated inputs and return values, browser initialization, per-request Next.js clients, permissions, and version upgrades.
+
 <Cards>
+  <Card title="Generated SDK" href="/docs/sdk/overview" description="Generate, install, configure, and version a typed frontend client." />
   <Card title="Official Plugins" href="/docs/official-plugins/oauth" description="The plugin this page's examples are drawn from." />
   <Card title="Resource Composition" href="/docs/http/resource-composition" description="The async-installer pattern a plugin with real dependencies typically needs." />
 </Cards>
