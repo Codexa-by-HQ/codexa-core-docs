@@ -1,10 +1,10 @@
 ---
 title: "Providers"
-description: "Every third-party package Codexa Core depends on, re-exported so a project never installs or maps them separately."
+description: "Dependency packages re-exported by Codexa Core, including JetRouter, so a project never installs or maps them separately."
 icon: "Puzzle"
 ---
 
-Codexa Core's own modules are built on a handful of well-established third-party packages. Rather than making a project install and configure each one itself, every dependency is re-exported through `@codexa/core/providers`, so importing from `@codexa/core` is enough.
+Codexa Core uses JetRouter for HTTP route matching alongside several third-party packages. These dependencies are re-exported through `@codexa/core/providers`, so a project can use the same versions as Codexa Core without installing and configuring each one separately.
 
 ```ts
 import { MongoClient } from '@codexa/core/providers/mongodb';
@@ -18,13 +18,13 @@ import Redis from '@codexa/core/providers/ioredis';
 
 ```ts
 import { zod } from '@codexa/core/providers/zod';
-import { createRouter } from '@codexa/core/providers/rou3';
+import { createRouter } from '@codexa/core/providers/jetrouter';
 ```
 
 **The `providers` namespace subpath** gives every provider as a named export instead, useful when you want several of them from one import line.
 
 ```ts
-import { zod, mongodb, ioredis } from '@codexa/core/providers';
+import { zod, mongodb, ioredis, jetrouter } from '@codexa/core/providers';
 
 const client = new mongodb.MongoClient(uri);
 ```
@@ -41,11 +41,17 @@ Reach for the dedicated subpath in most code, it is what every example on this s
 | `@codexa/core/providers/ioredis` | `ioredis` | The client type behind [`createRedisConnection`](/docs/configuration/redis) |
 | `@codexa/core/providers/mongodb` | `mongodb` | Includes `ObjectId`, see [Database (MongoDB)](/docs/configuration/database) |
 | `@codexa/core/providers/qs` | `qs` | Backs [`parseQueryParams`](/docs/utilities/query-parser) |
-| `@codexa/core/providers/rou3` | `rou3` | The radix tree router the [HTTP layer](/docs/http/overview) matches routes with internally |
+| `@codexa/core/providers/jetrouter` | `jetrouter` | The zero-dependency routing engine the [HTTP layer](/docs/http/overview) uses to match methods and URL pathnames |
 | `@codexa/core/providers/ua-parser-js` | `ua-parser-js` | Backs [`parseDevice`](/docs/utilities/device-parsing) |
 | `@codexa/core/providers/noble-hashes` | `@noble/hashes` | Backs [`blake2bDigest`](/docs/utilities/crypto-and-passwords), exported as several submodule namespaces since the package has no single root module |
 
 `@codexa/core/zod` also exists as a shorter compatibility alias for `@codexa/core/providers/zod`. New code should prefer the full `providers/zod` path.
+
+## JetRouter and Codexa routers
+
+`@codexa/core/providers/jetrouter` exposes the standalone JetRouter engine, including `Router`, `createRouter`, `addRoute`, `findRoute`, and `routeToRegExp`. Its `createRouter()` creates a method/path matcher.
+
+Use `createRouter` from `@codexa/core/http` when you want a reusable collection of Codexa routes to mount into a plugin. Codexa compiles its internal JetRouter matcher during boot and whenever runtime route controls rebuild the route table.
 
 ## Why this exists
 

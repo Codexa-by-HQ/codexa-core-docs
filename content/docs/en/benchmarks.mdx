@@ -1,36 +1,56 @@
 ---
 title: "Benchmarks"
-description: "How Codexa Core's HTTP layer compares to raw Deno.serve, Oak, Hono, and Express on the same three endpoints."
+description: "The JetRouter-based Codexa Core build compared with Express, Oak, Fastify, Hono, NestJS, and Thunder."
 icon: "Gauge"
 ---
 
 import { BenchmarkChart, BenchmarkMeta } from '@/components/benchmark-chart';
 
-Three identical endpoints, `GET /hello`, `GET /users/:id`, and `POST /users` with a validated body, implemented once per framework and load tested with the same settings. Codexa Core is loaded from its published JSR package (`@codexa/core@1.0.7`), the same way a real consumer would install it, not from local source. Every number below is the median of three independent full runs, not a single sample. Numbers are from one developer machine and will vary by hardware, treat them as directional. See [Reproducing this](#reproducing-this) to run them yourself.
+This run compares the local generated Codexa Core build using JetRouter with **Express, Oak, Fastify, Hono, NestJS, and Thunder**. Codexa uses Deno; Express, Fastify, and NestJS use Node; Oak, Hono, and Thunder use Deno. These are complete HTTP stack measurements, including runtime overhead.
 
-<BenchmarkChart excludeKeys={['thunder']} />
+<BenchmarkChart />
 
 <BenchmarkMeta />
 
-## What this shows
+[Download the audited JSON](/benchmarks/results.json) · [Read the complete report](/benchmarks/results.md) · [Download raw evidence](/benchmarks/evidence-2026-10-20.zip)
 
-- **Raw `Deno.serve`** is the ceiling, no routing, no validation library overhead beyond Zod, just a manual `if` chain.
-- **Codexa Core** lands in the same tier as Hono on both GET routes (within about 10-15% of the raw ceiling), and clearly ahead of Oak and Express on all three endpoints, while adding a plugin system, a radix tree router, typed cross-plugin services, and request lifecycle hooks that the raw baseline has none of.
-- **Oak**, **Hono**, and **Express** are included as the comparison points most people already have intuition for, Oak and Hono as established Deno frameworks, Express as the most familiar reference point overall.
+## What was measured
+
+Every framework registers the same 1,004 definitions. The four workloads are a static JSON response at `GET /hello`, parameters at `GET /users/:id`, JSON parsing and common Zod validation at `POST /users`, and 64 varied paths drawn from 1,000 deeply nested parameterized routes. POST responses use the same deterministic ID and return status 201.
+
+Thunder runs its unmodified file-discovery and hook dispatcher with named router registrations, following its [official routing documentation](https://thunder.huruftech.com/docs/routes). The exact source revision is recorded with the results. Optional database startup is excluded for every framework. NestJS uses real controllers with its Express adapter and standard response handling. Fastify uses the common Zod schema without an additional compiled response schema.
+
+The raw Deno entry uses manual matching. A second, identical raw Deno entry is measured separately to detect run-order and machine variation; its control results are retained in the raw report rather than displayed as another framework.
 
 ## Methodology
 
-- **Load generator**: [autocannon](https://github.com/mcollina/autocannon), 50 concurrent connections, 10 second measurement window per endpoint per framework, a 3 second warmup run discarded before each measurement.
-- **Repetition**: each framework/endpoint combination was measured across 3 independent full runs (fresh process each time); the number shown is the median of those 3, not a single sample.
-- **Endpoints**: identical route shapes and identical Zod validation schema across every framework, so the comparison is routing and framework overhead, not differing amounts of work per request.
-- **Isolation**: each framework runs as its own process on its own port, benchmarked one at a time, never concurrently with another framework under test.
-- **What is not measured**: cold start time, memory usage, and behavior under sustained production load over hours are all out of scope here, this is a short-run throughput and latency snapshot only.
+- **Load**: autocannon 8.0.0, 50 connections, pipelining 1, 3 seconds discarded warmup followed by 10 seconds measured per workload.
+- **Repetition**: three rounds with fresh server processes and rotated framework and workload order. Only one tested server runs at a time.
+- **Correctness**: exact response bodies and statuses are validated during load. Preflight checks also cover static/parameter overlap, missing routes, malformed JSON, and invalid body data. Response totals must agree with per-path and per-second counters.
+- **Reporting**: rates are medians of completed responses divided by measured wall seconds. Each row shows the run range and coefficient of variation. Displayed p99 is the median of three per-run p99 values, not a pooled latency percentile.
+- **Provenance**: npm and Deno lockfiles pin dependencies. The result records source hashes and verifies that Core, the generated package, and benchmark inputs stayed unchanged during measurement.
+
+## How to interpret this
+
+**108 timed samples and 22,252,810 responses passed the status, body, and counter audits.** The client CPU warning threshold was crossed in **68 of 108 samples**, so the faster entries may be limited by the load generator.
+
+Client and server share a developer machine. The raw report flags samples where load-generator CPU exceeds 85% of one core and shows drift between identical controls. Close differences can be noise; the chart establishes neither a universal framework ranking nor maximum production capacity. Repeat on deployment hardware with a separate load-generator machine for capacity decisions.
+
+This is a **local build with JetRouter**, not a measurement of the currently published JSR release. The historical September 7 results for Codexa Core 1.0.7 are preserved byte-for-byte under `benchmarks/results/history/2026-09-07/`. [Download the historical JSON](/benchmarks/history/2026-09-07/results.json) or [read the original report](/benchmarks/history/2026-09-07/results.md). They used three route definitions, different dependency versions, and a different runtime version. Comparing those figures with this larger workload does not isolate the effect of replacing the routing engine.
 
 ## Reproducing this
 
-The harness (one Deno file covering Codexa Core, raw `Deno.serve`, Oak, and Hono selected by an environment variable, one Express file, and a Node orchestrator script) is kept separately, outside both the `codexa-core` and `codexa-core-docs` repositories, so neither repo has to carry framework server code alongside its own source. Both repos track only the generated output, at `benchmarks/results/results.json` and `results.md`, which is what this page reads.
+The reproducible harness lives in the Core repository at `benchmarks/http/`. Run the following from the Core project:
 
-<Cards>
-  <Card title="HTTP" href="/docs/http/overview" description="The plugin-first router and lifecycle these numbers are measuring." />
-  <Card title="Installation" href="/docs/installation" description="Install the exact package these benchmarks load from JSR." />
-</Cards>
+```sh
+deno task build
+cd benchmarks/http
+npm ci --ignore-scripts
+npm run prepare
+node --test report.test.mjs
+npm run validate
+node run.mjs --rounds=3 --warmup=3 --duration=10 --connections=50
+node report.mjs results/http-YYYY-MM-DDTHH-MM-SS-SSSZ
+```
+
+The timestamped run directory contains raw samples, latency data, request manifests, validation counters, and server logs. The audited summary is copied to `benchmarks/results/results.json` and `results.md` in Core and this documentation project; the chart reads the same JSON from `src/data/benchmark-results.json`.

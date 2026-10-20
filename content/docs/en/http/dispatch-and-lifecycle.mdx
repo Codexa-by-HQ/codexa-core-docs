@@ -51,7 +51,9 @@ The request method is checked against the methods Codexa Core understands, `GET`
 
 ### Route matching
 
-The path is matched against the compiled route table. No match, or a match against a disabled route, calls your [`onNotFound`](#not-found-and-exceptions) handler.
+JetRouter matches the request method and URL pathname against the compiled route table. Query strings do not participate in route matching, and captured parameter values remain URL-encoded. No match, or a match against a disabled route, calls your [`onNotFound`](#not-found-and-exceptions) handler.
+
+Matching is case-sensitive and ignores exactly one trailing slash. For a registered `/users` route, `/users` and `/users/` match; `/users//` and `/users///` do not match and use `onNotFound` instead.
 
 </Step>
 

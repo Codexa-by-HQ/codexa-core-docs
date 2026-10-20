@@ -11,7 +11,7 @@ Codexa Core targets Deno as its primary runtime, but keeps its HTTP layer runtim
 
 Instead of one large bundle, the framework ships as small, focused packages. A project imports only the parts it needs:
 
-- An HTTP layer built on a radix tree router
+- An HTTP layer powered by JetRouter
 - An OpenAPI 3.1 generator
 - A typed frontend SDK generator powered by OpenAPI route metadata
 - Environment and database configuration
@@ -115,7 +115,7 @@ Each capability below is its own subpath, so a project that only needs the HTTP 
 
 | Import | Purpose |
 | --- | --- |
-| `@codexa/core/http` | Plugin first HTTP framework, built on the Fetch API and a radix tree router |
+| `@codexa/core/http` | Plugin first HTTP framework, built on the Fetch API and JetRouter |
 | `@codexa/core/openapi` | OpenAPI 3.1 document generator, built from route metadata |
 | `@codexa/core/sdk` | Frontend SDK generator, built from the same OpenAPI route metadata |
 | `@codexa/core/config` | Environment variables, MongoDB, Redis, and storage configuration |

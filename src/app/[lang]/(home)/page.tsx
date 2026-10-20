@@ -101,9 +101,9 @@ const features = [
   },
   {
     icon: Route,
-    title: 'Radix tree router',
+    title: 'Powered by JetRouter',
     description:
-      'Static, param, and wildcard routes resolve through a radix tree, with versioned routes and per-route middleware built in.',
+      'JetRouter matches static, parameterized, and wildcard routes, while Codexa adds versioned routes and per-route middleware.',
   },
   {
     icon: Terminal,
@@ -376,18 +376,18 @@ export default function HomePage() {
         <div className="mx-auto max-w-3xl px-6 py-20">
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="text-2xl font-bold text-fd-foreground sm:text-3xl">
-              Faster than Oak and Express
+              HTTP benchmarks with JetRouter
             </h2>
             <p className="mt-4 text-fd-muted-foreground">
-              A GET request measured with the same 50-connection load test
-              across frameworks. Full methodology, all three endpoints, and
-              raw Deno.serve as a baseline are in the benchmarks docs.
+              The local JetRouter-based build measured alongside Express, Oak,
+              Fastify, Hono, NestJS, and Thunder. See every workload, the raw
+              Deno baseline, and measured variation in the benchmark docs.
             </p>
           </div>
 
           <div className="mt-12">
             <BenchmarkChart
-              excludeKeys={['deno', 'hono', 'thunder']}
+              excludeKeys={['deno-control']}
               onlyEndpoint="hello"
             />
           </div>
